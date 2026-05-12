@@ -37,8 +37,27 @@ async function onOAuthCallback({ platform, hostname, tokenUrl, query, hashedRcEx
         const code = new URL(callbackUri).searchParams.get('code');
         overridingOAuthOption = platformModule.getOverridingOAuthOption({ code });
     }
-    const oauthApp = oauth.getOAuthApp(oauthInfo);
-    const { accessToken, refreshToken, expires, data } = await oauthApp.code.getToken(callbackUri, overridingOAuthOption);
+    let oauthApp = null;
+    let accessToken;
+    let refreshToken;
+    let expires;
+    let data;
+    if (platformModule.exchangeOAuthCallback) {
+        ({ accessToken, refreshToken, expires, data } = await platformModule.exchangeOAuthCallback({
+            callbackUri,
+            tokenUrl,
+            hostname,
+            query,
+            proxyId,
+            proxyConfig,
+            userEmail,
+            oauthInfo
+        }));
+    }
+    else {
+        oauthApp = oauth.getOAuthApp(oauthInfo);
+        ({ accessToken, refreshToken, expires, data } = await oauthApp.code.getToken(callbackUri, overridingOAuthOption));
+    }
     const authHeader = `Bearer ${accessToken}`;
     const { successful, platformUserInfo, returnMessage } = await platformModule.getUserInfo({ authHeader, tokenUrl, apiUrl, hostname, platform, username, callbackUri, query, proxyId, proxyConfig, userEmail, data });
 

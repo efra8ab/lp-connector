@@ -137,6 +137,26 @@ function getBearerTokenFromRequest(req) {
     return token;
 }
 
+function replaceAppServerPlaceholders(value, appServer) {
+    if (!appServer) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        return value.replace(/__APP_SERVER__/g, appServer);
+    }
+    if (Array.isArray(value)) {
+        return value.map(item => replaceAppServerPlaceholders(item, appServer));
+    }
+    if (value && typeof value === 'object') {
+        const replaced = {};
+        Object.entries(value).forEach(([key, childValue]) => {
+            replaced[key] = replaceAppServerPlaceholders(childValue, appServer);
+        });
+        return replaced;
+    }
+    return value;
+}
+
 function normalizeJwtFromRequest(req, res, next) {
     if (req.path?.startsWith('/mcp')) {
         return next();
@@ -216,8 +236,10 @@ function createCoreRouter() {
     router.get('/crmManifest', (req, res) => {
         try {
             const platformName = req.query.platformName || 'default';
-            const crmManifest = connectorRegistry.getManifest(platformName);
+            let crmManifest = connectorRegistry.getManifest(platformName, true);
             if (crmManifest) {
+                const appServer = process.env.OVERRIDE_APP_SERVER || process.env.APP_SERVER;
+                crmManifest = replaceAppServerPlaceholders(crmManifest, appServer);
                 // Override app server url for local development
                 if (process.env.OVERRIDE_APP_SERVER) {
                     crmManifest.serverUrl = process.env.OVERRIDE_APP_SERVER;

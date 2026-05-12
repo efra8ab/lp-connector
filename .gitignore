@@ -32,3 +32,5 @@ local.session.sql
 /minio.exe
 /data/*
 scripts/mkdocs/hooks/__pycache__/shortcodes.cpython-314.pyc
+
+tracker.md
