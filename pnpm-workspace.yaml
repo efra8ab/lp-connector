@@ -1,0 +1,8 @@
+packages:
+ - "./packages/*"
+allowBuilds:
+  aws-sdk: true
+  es5-ext: false
+  ngrok: true
+  serverless: true
+  sqlite3: true
