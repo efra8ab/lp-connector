@@ -442,6 +442,11 @@ app.delete('/pipedrive-redirect', async function (req, res) {
 
 app.get('/leadperfection/auth', function (req, res) {
     try {
+        logger.info('LeadPerfection auth page requested', {
+            hostname: req.query.hostname || '',
+            hasState: !!req.query.state,
+            hasRedirectUri: !!req.query.redirect_uri
+        });
         const state = req.query.state || '';
         const stateParams = new URLSearchParams(state ? decodeURIComponent(state) : '');
         const hostname = req.query.hostname || stateParams.get('hostname') || '';
@@ -462,6 +467,12 @@ app.get('/leadperfection/auth', function (req, res) {
 
 app.post('/leadperfection/auth', function (req, res) {
     try {
+        logger.info('LeadPerfection auth form submitted', {
+            hostname: req.body?.hostname || '',
+            username: req.body?.username?.trim() || '',
+            hasState: !!req.body?.state,
+            hasRedirectUri: !!req.body?.redirect_uri
+        });
         const redirectUri = req.body?.redirect_uri;
         const state = req.body?.state;
         const username = req.body?.username?.trim();
@@ -487,6 +498,11 @@ app.post('/leadperfection/auth', function (req, res) {
             clientId
         })));
         redirectUrl.searchParams.set('state', state);
+        logger.info('LeadPerfection auth redirect prepared', {
+            hostname,
+            clientId,
+            redirectHost: redirectUrl.hostname
+        });
         res.redirect(302, redirectUrl.toString());
     }
     catch (e) {
