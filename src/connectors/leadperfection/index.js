@@ -407,6 +407,14 @@ function getPhoneVariants(phoneNumber) {
     const normalized = cleaned.replace(/\s+/g, '');
     const digits = normalized.replace(/\D/g, '');
     const variants = new Set([cleaned, normalized, digits]);
+    if (digits.length === 10) {
+        variants.add(`1${digits}`);
+        variants.add(`+1${digits}`);
+    }
+    if (digits.length === 11 && digits.startsWith('1')) {
+        variants.add(digits.slice(1));
+        variants.add(`+${digits}`);
+    }
     try {
         const parsed = parsePhoneNumber(normalized.includes('+') ? normalized : `+${digits}`);
         if (parsed.valid) {
@@ -484,6 +492,24 @@ function setCachedContactLookupResult(cacheKey, result) {
     contactLookupCache.set(cacheKey, existingEntry);
 }
 
+function isLeadPerfectionContactRecord(record) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        return false;
+    }
+    return Boolean(
+        record.CustID
+        || record.custid
+        || record.CustomerID
+        || record.customerid
+        || record.LeadID
+        || record.leadid
+        || record.ProspectID
+        || record.prospectid
+        || record.CustomerName
+        || record.customerName
+    );
+}
+
 function normalizeLeadPerfectionArray(data) {
     if (Array.isArray(data)) {
         return data;
@@ -496,9 +522,43 @@ function normalizeLeadPerfectionArray(data) {
         if (Array.isArray(data[key])) {
             return data[key];
         }
+        if (isLeadPerfectionContactRecord(data[key])) {
+            return [data[key]];
+        }
+    }
+    if (isLeadPerfectionContactRecord(data)) {
+        return [data];
     }
     const nestedArray = Object.values(data).find(value => Array.isArray(value));
-    return Array.isArray(nestedArray) ? nestedArray : [];
+    if (Array.isArray(nestedArray)) {
+        return nestedArray;
+    }
+    const nestedRecord = Object.values(data).find(value => isLeadPerfectionContactRecord(value));
+    return nestedRecord ? [nestedRecord] : [];
+}
+
+function summarizeLeadPerfectionLookupPayload(data) {
+    if (Array.isArray(data)) {
+        return {
+            shape: 'array',
+            count: data.length,
+            firstRecord: data[0] || null
+        };
+    }
+    if (!data || typeof data !== 'object') {
+        return {
+            shape: typeof data,
+            count: 0,
+            firstRecord: null
+        };
+    }
+    const normalized = normalizeLeadPerfectionArray(data);
+    return {
+        shape: 'object',
+        keys: Object.keys(data),
+        count: normalized.length,
+        firstRecord: normalized[0] || null
+    };
 }
 
 function normalizeContactRecord(record, fallbackPhone) {
@@ -605,6 +665,14 @@ async function findContact({ user, authHeader, phoneNumber, isExtension }) {
         };
     }
     const variants = getPhoneVariants(phoneNumber);
+    if (process.env.IS_PROD === 'false') {
+        logger.info('LeadPerfection findContact lookup started', {
+            userId: user?.id,
+            hostname: user?.hostname,
+            phoneNumber,
+            variants
+        });
+    }
     if (variants.length === 0) {
         return {
             successful: false,
@@ -643,11 +711,32 @@ async function findContact({ user, authHeader, phoneNumber, isExtension }) {
                     path: '/api/Customers/GetCustomers3',
                     body: { phone: variant }
                 });
-                for (const row of normalizeLeadPerfectionArray(response.data)) {
+                const normalizedRows = normalizeLeadPerfectionArray(response.data);
+                if (process.env.IS_PROD === 'false') {
+                    logger.info('LeadPerfection findContact lookup response', {
+                        userId: user?.id,
+                        variant,
+                        summary: summarizeLeadPerfectionLookupPayload(response.data)
+                    });
+                }
+                for (const row of normalizedRows) {
                     const normalizedContact = normalizeContactRecord(row, phoneNumber);
                     if (normalizedContact && !dedupedContacts.has(normalizedContact.id)) {
                         dedupedContacts.set(normalizedContact.id, normalizedContact);
                     }
+                }
+                if (process.env.IS_PROD === 'false') {
+                    logger.info('LeadPerfection findContact normalized matches', {
+                        userId: user?.id,
+                        variant,
+                        matchCount: dedupedContacts.size,
+                        matches: Array.from(dedupedContacts.values()).map(contact => ({
+                            id: contact.id,
+                            name: contact.name,
+                            phone: contact.phone,
+                            type: contact.type
+                        }))
+                    });
                 }
                 if (dedupedContacts.size > 0) {
                     break;
@@ -656,6 +745,13 @@ async function findContact({ user, authHeader, phoneNumber, isExtension }) {
 
             const matchedContactInfo = Array.from(dedupedContacts.values());
             if (matchedContactInfo.length === 0) {
+                if (process.env.IS_PROD === 'false') {
+                    logger.warn('LeadPerfection findContact lookup returned no matches', {
+                        userId: user?.id,
+                        phoneNumber,
+                        variants
+                    });
+                }
                 matchedContactInfo.push({
                     id: 'createNewContact',
                     name: 'Create new contact...',

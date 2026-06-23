@@ -194,6 +194,62 @@ describe('LeadPerfection Connector', () => {
         });
     });
 
+    test('findContact accepts a single-object GetCustomers3 response', async () => {
+        nock(baseUrl)
+            .post('/api/Customers/GetCustomers3')
+            .reply(200, {
+                CustID: 124,
+                FirstName: 'Solo',
+                LastName: 'Match',
+                Phone: '+14155550011'
+            });
+
+        const result = await leadperfection.findContact({
+            user: mockUser,
+            authHeader: 'Bearer current-access-token',
+            phoneNumber: '+14155550011',
+            isExtension: 'false'
+        });
+
+        expect(result.successful).toBe(true);
+        expect(result.matchedContactInfo).toHaveLength(1);
+        expect(result.matchedContactInfo[0]).toMatchObject({
+            id: '124',
+            name: 'Solo Match',
+            type: 'Contact'
+        });
+    });
+
+    test('findContact tries NANP country-code variants for local 10-digit numbers', async () => {
+        nock(baseUrl)
+            .post('/api/Customers/GetCustomers3', body => body.phone === '4155550002')
+            .reply(200, [])
+            .post('/api/Customers/GetCustomers3', body => body.phone === '14155550002')
+            .reply(200, [
+                {
+                    CustID: 125,
+                    FirstName: 'Local',
+                    LastName: 'Format',
+                    Phone: '14155550002'
+                }
+            ]);
+
+        const result = await leadperfection.findContact({
+            user: mockUser,
+            authHeader: 'Bearer current-access-token',
+            phoneNumber: '4155550002',
+            isExtension: 'false'
+        });
+
+        expect(result.successful).toBe(true);
+        expect(result.matchedContactInfo).toHaveLength(1);
+        expect(result.matchedContactInfo[0]).toMatchObject({
+            id: '125',
+            name: 'Local Format',
+            type: 'Contact'
+        });
+    });
+
     test('findContact reuses a cached result for repeated lookups', async () => {
         const scope = nock(baseUrl)
             .post('/api/Customers/GetCustomers3')

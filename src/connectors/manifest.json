@@ -1059,7 +1059,7 @@
       },
       "canOpenLogPage": true,
       "disableDisposition": false,
-      "contactPageUrl": "https://{hostname}/contacts/{contactId}",
+      "contactPageUrl": "https://{hostname}/leaddetail.html?custid={contactId}",
       "logPageUrl": "https://{hostname}/activities/{logId}"
     },
     "bullhorn": {
@@ -1382,7 +1382,7 @@
         }
       },
       "canOpenLogPage": true,
-      "contactPageUrl": "https://{hostname}/contacts/{contactId}",
+      "contactPageUrl": "https://{hostname}/leaddetail.html?custid={contactId}",
       "logPageUrl": "https://{hostname}/activities/{logId}",
       "contactTypes": [
         {
