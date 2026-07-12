@@ -9,6 +9,22 @@ const logger = require('@app-connect/core/lib/logger');
 const { handleDatabaseError } = require('@app-connect/core/lib/errorHandler');
 const { encode, decoded } = require('@app-connect/core/lib/encode');
 
+const connectorManifest = require('../manifest.json');
+
+// The extension only renders a 'selection' additionalField when the matched
+// contact's additionalInfo carries an option list under the field's const;
+// inline manifest options are ignored by the client.
+const callLogDropdownOptions = (() => {
+    const fields = connectorManifest.platforms?.leadperfection?.page?.callLog?.additionalFields ?? [];
+    const optionsByField = {};
+    for (const field of fields) {
+        if (field?.type === 'selection' && Array.isArray(field.options)) {
+            optionsByField[field.const] = field.options;
+        }
+    }
+    return optionsByField;
+})();
+
 const DEFAULT_LP_BASE_URL = 'https://apitest.leadperfection.com';
 const LP_TOKEN_LOCK_TTL_SECONDS = 30;
 const TOKEN_EXPIRY_BUFFER_MINUTES = 2;
@@ -393,12 +409,14 @@ function getBearerHeaders(user, authHeader) {
 }
 
 async function callLeadPerfectionApi({ user, authHeader, path, body }) {
+    const headers = getBearerHeaders(user, authHeader);
+    if (body instanceof URLSearchParams) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    }
     return axios.post(
         `${getBaseUrl(user)}${path}`,
         body,
-        {
-            headers: getBearerHeaders(user, authHeader)
-        }
+        { headers }
     );
 }
 
@@ -564,6 +582,7 @@ function summarizeLeadPerfectionLookupPayload(data) {
 function normalizeContactRecord(record, fallbackPhone) {
     const custId = record.CustID || record.custid || record.CustomerID || record.customerid || null;
     const leadId = record.LeadID || record.leadid || record.ProspectID || record.prospectid || null;
+    const prospectId = record.ProspectID || record.prospectid || null;
     const id = custId || leadId || record.ID || record.id;
     if (!id) {
         return null;
@@ -575,7 +594,9 @@ function normalizeContactRecord(record, fallbackPhone) {
     const phone = record.Phone || record.phone || record.Phone1 || record.phone1 || record.MobilePhone || record.mobilePhone || fallbackPhone;
     const additionalInfo = {
         custId,
-        leadId
+        leadId,
+        prospectId,
+        ...callLogDropdownOptions
     };
     return {
         id: String(id),
@@ -583,17 +604,18 @@ function normalizeContactRecord(record, fallbackPhone) {
         phone,
         type: leadId && !custId ? 'Lead' : 'Contact',
         mostRecentActivityDate: record.ModifiedDate || record.modifiedDate || record.LastUpdated || record.lastUpdated || null,
-        additionalInfo: additionalInfo.custId || additionalInfo.leadId ? additionalInfo : null
+        additionalInfo
     };
 }
 
 function getLeadPerfectionContactId(contactInfo) {
     const leadId = contactInfo?.additionalInfo?.leadId;
+    const prospectId = contactInfo?.additionalInfo?.prospectId;
     const custId = contactInfo?.additionalInfo?.custId;
     if (contactInfo?.type === 'Lead' && (leadId || !custId)) {
         return {
-            key: 'LeadID',
-            value: leadId || contactInfo.id
+            key: 'ProspectID',
+            value: prospectId || leadId || contactInfo.id
         };
     }
     return {
@@ -615,6 +637,46 @@ function getCallPhoneNumber(contactInfo, callLog) {
         return callLog?.to?.phoneNumber || contactInfo?.phone || '';
     }
     return callLog?.from?.phoneNumber || contactInfo?.phone || '';
+}
+
+// The extension appends a 'None' option to every selection dropdown and
+// submits it as the literal string 'none' — treat that as "not selected".
+function getSubmittedSelection(value) {
+    return value && value !== 'none' ? value : undefined;
+}
+
+function getCallType(callLog, additionalSubmission) {
+    const submittedCallType = getSubmittedSelection(additionalSubmission?.callType);
+    if (submittedCallType) {
+        return submittedCallType;
+    }
+    if (callLog?.direction === 'Outbound') {
+        return process.env.LP_OUTBOUND_CALL_TYPE || process.env.LP_DEFAULT_CALL_TYPE || 'O';
+    }
+    return process.env.LP_INBOUND_CALL_TYPE || process.env.LP_DEFAULT_CALL_TYPE || 'O';
+}
+
+function getResultCode(callLog, additionalSubmission) {
+    return getSubmittedSelection(additionalSubmission?.resultCode)
+        || getSubmittedSelection(callLog?.resultCode)
+        || process.env.LP_DEFAULT_RESULT_CODE
+        || 'NA';
+}
+
+function getEmployeeId(user) {
+    return user.platformAdditionalInfo?.employeeId || process.env.LP_EMPLOYEE_ID || undefined;
+}
+
+function getDigits(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
+function getLeadPerfectionError(responseData) {
+    if (!Array.isArray(responseData)) {
+        return null;
+    }
+    const failedResult = responseData.find(item => Number(item?.Result) === 0 && item?.Message);
+    return failedResult?.Message || null;
 }
 
 async function authValidation({ user }) {
@@ -756,7 +818,8 @@ async function findContact({ user, authHeader, phoneNumber, isExtension }) {
                     id: 'createNewContact',
                     name: 'Create new contact...',
                     isNewContact: true,
-                    defaultContactType: 'Lead'
+                    defaultContactType: 'Lead',
+                    additionalInfo: { ...callLogDropdownOptions }
                 });
             }
             const result = {
@@ -821,7 +884,8 @@ async function createContact({ user, authHeader, phoneNumber, newContactName }) 
             type: 'Lead',
             additionalInfo: {
                 leadId: contactId || null,
-                custId: null
+                custId: null,
+                ...callLogDropdownOptions
             }
         },
         returnMessage: {
@@ -832,18 +896,66 @@ async function createContact({ user, authHeader, phoneNumber, newContactName }) 
     };
 }
 
-async function createCallLog({ user, contactInfo, callLog, additionalSubmission }) {
+// AddNotes attaches to the record's Notes tab. rectype: cst=Prospect,
+// ils=Issued Lead, job=Job Detail; nct_id (note category) defaults to 1.
+async function addLeadPerfectionNote({ user, contactInfo, note }) {
+    const noteText = String(note || '').trim();
+    if (!noteText) {
+        return { attempted: false };
+    }
+    const recId = contactInfo?.additionalInfo?.prospectId
+        || contactInfo?.additionalInfo?.leadId
+        || contactInfo?.additionalInfo?.custId
+        || contactInfo?.id;
+    const body = new URLSearchParams({
+        rectype: 'cst',
+        recid: String(recId),
+        notes: noteText
+    });
+    if (process.env.LP_NOTE_CATEGORY_ID) {
+        body.append('nct_id', process.env.LP_NOTE_CATEGORY_ID);
+    }
+    const response = await callLeadPerfectionApi({
+        user,
+        path: '/api/SalesApi/AddNotes',
+        body
+    });
+    logger.info('LeadPerfection AddNotes response', {
+        userId: user?.id,
+        recId,
+        status: response.status,
+        responseData: response.data
+    });
+    const failureMessage = getLeadPerfectionError(response.data)
+        || (typeof response.data === 'string' && !/success/i.test(response.data) ? response.data : null);
+    return {
+        attempted: true,
+        successful: !failureMessage,
+        message: failureMessage
+    };
+}
+
+async function createCallLog({ user, contactInfo, callLog, note, additionalSubmission }) {
     const contactId = getLeadPerfectionContactId(contactInfo);
     const payload = {
-        EmpID: user.platformAdditionalInfo?.employeeId || undefined,
+        EmpID: getEmployeeId(user),
         CallDate: moment(callLog.startTime).format('YYYY-MM-DD HH:mm:ss'),
-        ResultCode: additionalSubmission?.resultCode || callLog?.resultCode || undefined,
-        Phone: getCallPhoneNumber(contactInfo, callLog),
-        CallType: callLog.direction === 'Outbound' ? 'Outbound' : 'Inbound',
+        ResultCode: getResultCode(callLog, additionalSubmission),
+        Phone: getDigits(getCallPhoneNumber(contactInfo, callLog)),
+        CallType: getCallType(callLog, additionalSubmission),
         Duration: formatDuration(callLog.duration),
         RecordingURL: callLog?.recording?.link || additionalSubmission?.recordingUrl || undefined
     };
+    if (process.env.LP_CALL_QUEUE_ID) {
+        payload.CallQueueID = process.env.LP_CALL_QUEUE_ID;
+    }
     payload[contactId.key] = contactId.value;
+
+    logger.info('LeadPerfection createCallLog payload', {
+        userId: user?.id,
+        contactId,
+        payload
+    });
 
     const response = await callLeadPerfectionApi({
         user,
@@ -851,10 +963,51 @@ async function createCallLog({ user, contactInfo, callLog, additionalSubmission 
         body: payload
     });
     const responseData = response.data || {};
+    logger.info('LeadPerfection createCallLog response', {
+        userId: user?.id,
+        contactId,
+        status: response.status,
+        responseData
+    });
+    const lpError = getLeadPerfectionError(responseData);
+    if (lpError) {
+        return {
+            logId: null,
+            returnMessage: {
+                message: lpError,
+                messageType: 'warning',
+                ttl: 5000
+            }
+        };
+    }
+    let noteOutcome = { attempted: false };
+    try {
+        noteOutcome = await addLeadPerfectionNote({ user, contactInfo, note });
+    }
+    catch (error) {
+        logger.error('LeadPerfection AddNotes failed', {
+            userId: user?.id,
+            contactId,
+            status: error.response?.status,
+            responseData: error.response?.data
+        });
+        noteOutcome = { attempted: true, successful: false, message: error.message };
+    }
+    const logId = responseData.CallHistoryID || responseData.callHistoryId || responseData.id || callLog.sessionId;
+    if (noteOutcome.attempted && !noteOutcome.successful) {
+        return {
+            logId,
+            returnMessage: {
+                message: `Call logged, but the note could not be saved${noteOutcome.message ? `: ${noteOutcome.message}` : '.'}`,
+                messageType: 'warning',
+                ttl: 5000
+            }
+        };
+    }
     return {
-        logId: responseData.CallHistoryID || responseData.callHistoryId || responseData.id || callLog.sessionId,
+        logId,
         returnMessage: {
-            message: 'Call logged',
+            message: noteOutcome.attempted ? 'Call logged and note saved' : 'Call logged',
             messageType: 'success',
             ttl: 2000
         }

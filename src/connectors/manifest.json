@@ -1400,7 +1400,146 @@
           "additionalFields": []
         },
         "callLog": {
-          "additionalFields": []
+          "additionalFields": [
+            {
+              "const": "resultCode",
+              "title": "Call Result",
+              "type": "selection",
+              "contactDependent": false,
+              "includeNoneOption": true,
+              "options": [
+                {
+                  "const": "NA",
+                  "title": "No Answer"
+                },
+                {
+                  "const": "AP",
+                  "title": "Appointment"
+                },
+                {
+                  "const": "CONF",
+                  "title": "Confirmed"
+                },
+                {
+                  "const": "HU",
+                  "title": "Hung Up"
+                },
+                {
+                  "const": "COMP",
+                  "title": "Bought Competition"
+                },
+                {
+                  "const": "LM",
+                  "title": "Left Message"
+                },
+                {
+                  "const": "OOA",
+                  "title": "Out of Area"
+                },
+                {
+                  "const": "AM",
+                  "title": "Answering Machine"
+                },
+                {
+                  "const": "BZ",
+                  "title": "Busy"
+                },
+                {
+                  "const": "WN",
+                  "title": "Wrong Number"
+                },
+                {
+                  "const": "FL",
+                  "title": "Foreign Language"
+                },
+                {
+                  "const": "CB",
+                  "title": "CallBack Set"
+                },
+                {
+                  "const": "NI",
+                  "title": "No Interest Now"
+                },
+                {
+                  "const": "DNC",
+                  "title": "Asked DNC"
+                },
+                {
+                  "const": "OS",
+                  "title": "Out of Service"
+                },
+                {
+                  "const": "NG",
+                  "title": "No Good"
+                },
+                {
+                  "const": "*ND",
+                  "title": "Not Dialed"
+                },
+                {
+                  "const": "FM",
+                  "title": "Fax Machine"
+                },
+                {
+                  "const": "BRO",
+                  "title": "Brochure"
+                }
+              ]
+            },
+            {
+              "const": "callType",
+              "title": "Call Type",
+              "type": "selection",
+              "contactDependent": false,
+              "includeNoneOption": true,
+              "options": [
+                {
+                  "const": "O",
+                  "title": "Other"
+                },
+                {
+                  "const": "I",
+                  "title": "Inbound"
+                },
+                {
+                  "const": "B",
+                  "title": "CallBack"
+                },
+                {
+                  "const": "T",
+                  "title": "Cold Call"
+                },
+                {
+                  "const": "C",
+                  "title": "Confirmation"
+                },
+                {
+                  "const": "D",
+                  "title": "Data"
+                },
+                {
+                  "const": "Q",
+                  "title": "Quality"
+                },
+                {
+                  "const": "H",
+                  "title": "Rehash"
+                },
+                {
+                  "const": "R",
+                  "title": "Reset"
+                },
+                {
+                  "const": "S",
+                  "title": "Sale Follow Up"
+                },
+                {
+                  "const": "V",
+                  "title": "Verification"
+                }
+              ]
+            }
+          ]
         },
         "messageLog": {
           "additionalFields": []

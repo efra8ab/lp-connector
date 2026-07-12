@@ -296,6 +296,13 @@ async function createCallLog({ platform, userId, incomingData, hashedAccountId, 
                 pluginAsyncTaskIds
             };
         }
+        return {
+            successful: false,
+            logId,
+            returnMessage: mergePluginWarnings({ returnMessage, warningMessages: pluginWarnings }),
+            extraDataTracking,
+            pluginAsyncTaskIds
+        };
     } catch (e) {
         return handleApiError(e, platform, 'createCallLog', { userId });
     }

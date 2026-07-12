@@ -194,6 +194,52 @@ describe('LeadPerfection Connector', () => {
         });
     });
 
+    test('findContact attaches call-log dropdown options to matched contacts', async () => {
+        nock(baseUrl)
+            .post('/api/Customers/GetCustomers3')
+            .reply(200, [
+                {
+                    CustID: 321,
+                    FirstName: 'Drop',
+                    LastName: 'Downs',
+                    Phone: '+14155559901'
+                }
+            ]);
+
+        const result = await leadperfection.findContact({
+            user: mockUser,
+            authHeader: 'Bearer current-access-token',
+            phoneNumber: '+14155559901',
+            isExtension: 'false'
+        });
+
+        const additionalInfo = result.matchedContactInfo[0].additionalInfo;
+        expect(additionalInfo.resultCode).toHaveLength(19);
+        expect(additionalInfo.resultCode[0]).toEqual({ const: 'NA', title: 'No Answer' });
+        expect(additionalInfo.callType).toHaveLength(11);
+        expect(additionalInfo.callType[0]).toEqual({ const: 'O', title: 'Other' });
+    });
+
+    test('findContact attaches dropdown options to the create-new-contact entry', async () => {
+        nock(baseUrl)
+            .post('/api/Customers/GetCustomers3')
+            .times(10)
+            .reply(200, []);
+
+        const result = await leadperfection.findContact({
+            user: mockUser,
+            authHeader: 'Bearer current-access-token',
+            phoneNumber: '+14155559902',
+            isExtension: 'false'
+        });
+
+        expect(result.matchedContactInfo).toHaveLength(1);
+        const newContactEntry = result.matchedContactInfo[0];
+        expect(newContactEntry.isNewContact).toBe(true);
+        expect(newContactEntry.additionalInfo.resultCode).toHaveLength(19);
+        expect(newContactEntry.additionalInfo.callType).toHaveLength(11);
+    });
+
     test('findContact accepts a single-object GetCustomers3 response', async () => {
         nock(baseUrl)
             .post('/api/Customers/GetCustomers3')
@@ -337,7 +383,9 @@ describe('LeadPerfection Connector', () => {
             .post('/api/Customers/AddCallHistory', body => (
                 body.CustID === '123'
                 && body.EmpID === 77
-                && body.CallType === 'Outbound'
+                && body.CallType === 'O'
+                && body.ResultCode === 'NA'
+                && body.Phone === '14155555678'
                 && body.Duration === '00:05:00'
                 && body.RecordingURL === 'https://recording.example.com/123'
             ))
@@ -359,6 +407,270 @@ describe('LeadPerfection Connector', () => {
         });
 
         expect(result.logId).toBe(999);
+        expect(result.returnMessage.message).toBe('Call logged');
+    });
+
+    test('createCallLog uses env employee and call defaults when LP user data is missing them', async () => {
+        const callLog = createMockCallLog();
+        const userWithoutEmployee = createMockUser({
+            ...mockUser,
+            platformAdditionalInfo: {
+                ...mockUser.platformAdditionalInfo,
+                employeeId: null
+            }
+        });
+        process.env.LP_EMPLOYEE_ID = '51';
+        process.env.LP_DEFAULT_CALL_TYPE = 'D';
+        process.env.LP_DEFAULT_RESULT_CODE = 'WN';
+
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => (
+                body.CustID === '123'
+                && body.EmpID === '51'
+                && body.CallType === 'D'
+                && body.ResultCode === 'WN'
+            ))
+            .reply(200, { CallHistoryID: 1001 });
+
+        const result = await leadperfection.createCallLog({
+            user: userWithoutEmployee,
+            contactInfo: {
+                id: '123',
+                name: 'John Doe',
+                phone: '+14155551234',
+                type: 'Contact',
+                additionalInfo: {
+                    custId: '123'
+                }
+            },
+            callLog,
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1001);
+
+        delete process.env.LP_EMPLOYEE_ID;
+        delete process.env.LP_DEFAULT_CALL_TYPE;
+        delete process.env.LP_DEFAULT_RESULT_CODE;
+    });
+
+    test('createCallLog uses agent-selected call result and call type from additionalSubmission', async () => {
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => (
+                body.CustID === '123'
+                && body.CallType === 'V'
+                && body.ResultCode === 'LM'
+            ))
+            .reply(200, { CallHistoryID: 1002 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '123',
+                name: 'John Doe',
+                phone: '+14155551234',
+                type: 'Contact',
+                additionalInfo: {
+                    custId: '123'
+                }
+            },
+            callLog,
+            additionalSubmission: {
+                resultCode: 'LM',
+                callType: 'V'
+            }
+        });
+
+        expect(result.logId).toBe(1002);
+    });
+
+    test('createCallLog treats a "none" dropdown selection as unset', async () => {
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => (
+                body.CustID === '123'
+                && body.CallType === 'O'
+                && body.ResultCode === 'NA'
+            ))
+            .reply(200, { CallHistoryID: 1005 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '123',
+                name: 'John Doe',
+                phone: '+14155551234',
+                type: 'Contact',
+                additionalInfo: {
+                    custId: '123'
+                }
+            },
+            callLog,
+            additionalSubmission: {
+                resultCode: 'none',
+                callType: 'none'
+            }
+        });
+
+        expect(result.logId).toBe(1005);
+    });
+
+    test('createCallLog defaults inbound calls to the inbound call type', async () => {
+        const callLog = createMockCallLog({ direction: 'Inbound' });
+        process.env.LP_INBOUND_CALL_TYPE = 'I';
+
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => (
+                body.CustID === '123'
+                && body.CallType === 'I'
+                && body.Phone === '14155551234'
+            ))
+            .reply(200, { CallHistoryID: 1003 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '123',
+                name: 'John Doe',
+                phone: '+14155551234',
+                type: 'Contact',
+                additionalInfo: {
+                    custId: '123'
+                }
+            },
+            callLog,
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1003);
+
+        delete process.env.LP_INBOUND_CALL_TYPE;
+    });
+
+    test('createCallLog saves the agent note to the LP Notes tab via AddNotes', async () => {
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory')
+            .reply(200, { CallHistoryID: 1006 })
+            .post('/api/SalesApi/AddNotes', body => (
+                body.rectype === 'cst'
+                && body.recid === '3685357'
+                && body.notes === 'Left a voicemail'
+            ))
+            .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '3685357',
+                name: 'Test Test',
+                phone: '+14155551234',
+                type: 'Lead',
+                additionalInfo: {
+                    custId: null,
+                    leadId: '3685357',
+                    prospectId: '3685357'
+                }
+            },
+            callLog,
+            note: 'Left a voicemail',
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1006);
+        expect(result.returnMessage.messageType).toBe('success');
+        expect(result.returnMessage.message).toMatch(/note saved/i);
+    });
+
+    test('createCallLog still returns the logId when AddNotes fails', async () => {
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory')
+            .reply(200, { CallHistoryID: 1007 })
+            .post('/api/SalesApi/AddNotes')
+            .reply(500, 'server error');
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '123',
+                name: 'John Doe',
+                phone: '+14155551234',
+                type: 'Contact',
+                additionalInfo: {
+                    custId: '123'
+                }
+            },
+            callLog,
+            note: 'A note that will not stick',
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1007);
+        expect(result.returnMessage.messageType).toBe('warning');
+        expect(result.returnMessage.message).toMatch(/note could not be saved/i);
+    });
+
+    test('createCallLog returns warning when LeadPerfection reports body-level failure', async () => {
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory')
+            .reply(200, [
+                {
+                    Result: 0,
+                    Message: 'Error: CallType does not exist.'
+                }
+            ]);
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '123',
+                name: 'John Doe',
+                phone: '+14155551234',
+                type: 'Contact',
+                additionalInfo: {
+                    custId: '123'
+                }
+            },
+            callLog,
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBeNull();
+        expect(result.returnMessage.message).toBe('Error: CallType does not exist.');
+        expect(result.returnMessage.messageType).toBe('warning');
+    });
+
+    test('createCallLog posts ProspectID for Lead matches', async () => {
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => (
+                body.ProspectID === '5220526'
+                && body.CustID === undefined
+                && body.EmpID === 77
+            ))
+            .reply(200, { CallHistoryID: 1000 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo: {
+                id: '5220526',
+                name: 'Della Smith',
+                phone: '(720)236-7458',
+                type: 'Lead',
+                additionalInfo: {
+                    leadId: '5220526',
+                    prospectId: '5220526',
+                    custId: null
+                }
+            },
+            callLog,
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1000);
         expect(result.returnMessage.message).toBe('Call logged');
     });
 });
