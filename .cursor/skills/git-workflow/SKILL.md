@@ -7,7 +7,10 @@ description: Git workflow guide for the rc-unified-crm-extension monorepo. Cover
 
 ## Project Context
 
-npm workspaces monorepo with three packages (`packages/core`, `packages/template`, `packages/cli`) plus the root app (`src/connectors/`). Tests run on every push via GitHub Actions (`tests.yml`). Releases are triggered by pushing a semver tag.
+pnpm workspace monorepo with three main packages (`packages/core`,
+`packages/template`, `packages/cli`) plus the root app (`src/connectors/`). Use
+Node.js 24 and pnpm 10.34.0. Tests run on every push and pull request through
+GitHub Actions (`tests.yml`). Releases are triggered by pushing a semver tag.
 
 ---
 
@@ -47,14 +50,15 @@ For quick one-off fixes that don't warrant a type, `quick fix` or `quick patch` 
 | Branch | Purpose |
 |--------|---------|
 | `main` | Primary development — all day-to-day work lands here |
-| `release` | Release staging — merge `main` → `release` before tagging |
+| `leadperfection-phase0` | Historical feature branch retained for reference |
 | `feat/<name>` | Feature branches — e.g. `feat/group-sms-support` |
 | `docs/<name>` | Docs-only branches — e.g. `docs/zoho` |
 
 **Typical flow:**
 1. Branch off `main`: `git checkout -b feat/<feature-name>`
 2. Commit work, push, open PR → `main`
-3. When ready to release: merge `main` → `release`, then tag
+3. When ready to release: update the version and release notes on `main`, then
+   create the semver tag
 
 ---
 
@@ -63,10 +67,10 @@ For quick one-off fixes that don't warrant a type, `quick fix` or `quick patch` 
 ### 1. Update version
 
 ```bash
-npm run update
+pnpm run update
 ```
 
-This runs `scripts/update-version.js` to bump the version across packages.
+This runs `scripts/updateVersion.js` to bump the version across packages.
 
 ### 2. Update release notes
 
@@ -107,16 +111,18 @@ The workflow extracts the matching section from `docs/release-notes.md` and crea
 
 | Trigger | What runs |
 |---------|-----------|
-| Any push / PR | `npm run test-coverage` on Node 20 |
+| Any push / PR | Frozen pnpm install + `pnpm test` on the Node version in `.nvmrc` |
 | Push of `*.*.*` tag | Extract release notes → create GitHub Release |
-| Push/PR to `stable` | Test coverage + Coveralls report |
+| Push/PR to `stable` | Frozen pnpm install + `pnpm test` (legacy upstream branch workflow) |
+| Push of `htt*` tag | High-traffic test command (`pnpm htt`) |
 
 Before pushing, run tests locally:
 
 ```bash
-npm test                    # all tests (root + core)
-npm run test:root           # integration tests only
-cd packages/core && npm test  # core unit tests only
+pnpm install --frozen-lockfile  # verify the lockfile is current
+pnpm test                       # root + core + template tests
+pnpm test:root                  # root integration tests only
+pnpm --dir packages/core test   # core unit tests only
 ```
 
 ---

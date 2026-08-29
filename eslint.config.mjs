@@ -4,6 +4,16 @@ import pluginJs from "@eslint/js";
 /** @type {import('eslint').Linter.Config[]} */
 export default [
   {
+    ignores: [
+      "build/**",
+      "coverage/**",
+      "deleteme/**",
+      "serverless-deploy/**",
+      "serverless-deploy-test/**",
+      "serverless-deploy-test-beta/**"
+    ]
+  },
+  {
     files: ["**/*.js"],
     languageOptions: { sourceType: "commonjs" }
   },

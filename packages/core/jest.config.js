@@ -1,5 +1,3 @@
-const path = require('path');
-
 module.exports = {
   // Test environment
   testEnvironment: 'node',
@@ -16,7 +14,8 @@ module.exports = {
   ],
   
   // Coverage configuration
-  collectCoverage: true,
+  // Keep the regular test command fast; coverage scripts enable this explicitly.
+  collectCoverage: false,
   coverageDirectory: '<rootDir>/coverage',
   coverageReporters: ['text', 'lcov', 'html'],
   coveragePathIgnorePatterns: [
@@ -54,4 +53,4 @@ module.exports = {
   
   // Verbose output
   verbose: true
-}; 
+};

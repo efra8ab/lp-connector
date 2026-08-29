@@ -24,8 +24,8 @@ rc-unified-crm-extension/
 │   ├── index.js                 # App entry point
 │   ├── server.js                # Express server
 │   └── lambda.js                # AWS Lambda handler
-├── serverless-deploy/           # Production deployment
-├── serverless-deploy-test/      # Test environment deployment
+├── serverless-deploy/           # Generated production bundle + tracked samples
+├── serverless-deploy-test/      # Generated test bundle (created on demand)
 ├── docs/                        # Documentation (MkDocs)
 └── tests/                       # Integration tests
 ```
@@ -150,25 +150,43 @@ PIPEDRIVE_REDIRECT_URI=...
 ## Development Workflow
 
 ```bash
-# Start local server
-npm run server
+# Use the repository toolchain
+nvm use
+corepack enable
+
+# Install the exact locked dependencies
+pnpm install --frozen-lockfile
+
+# Start local server with file watching
+pnpm dev
+
+# Start the production entry point locally
+pnpm start
 
 # Start ngrok tunnel
-npm run ngrok
+pnpm ngrok
 
-# Run tests
-npm test
+# Run root, core, and template tests
+pnpm test
 
 # Build for deployment
-npm run build
+pnpm build
 
 # Deploy
-npm run deploy
+pnpm deploy
 ```
+
+Use Node.js 24 and pnpm 10.34.0, as pinned by `.nvmrc` and `package.json`.
+`serverless-deploy*` directories are generated output; do not treat them as
+source. The legacy serverless build still uses the root `package-lock.json`
+internally, so that lockfile must remain until the deployment builder is
+migrated separately.
 
 ## Database
 
-- **Development**: SQLite (`db.sqlite`)
+- **Development**: SQLite (`db.sqlite`) or PostgreSQL, according to `.env`
+- **Automated tests**: In-memory SQLite; tests must not reuse `db.sqlite`
 - **Production**: PostgreSQL via Sequelize ORM
-- **Cache/Locks**: DynamoDB (local via `npm run dynamo-local`)
-
+- **Cache/Locks**: DynamoDB (local via `pnpm dynamo-local`); the
+  LeadPerfection production plan is to replace its token-refresh lock with an
+  atomic expiring lock in PostgreSQL before Render deployment

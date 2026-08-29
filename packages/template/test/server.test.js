@@ -2,10 +2,10 @@ const request = require('supertest');
 const { app } = require('../src/app');
 
 describe('Server', () => {
-  describe('GET /is-alive', () => {
-    it('should return health status', async () => {
+  describe('GET /isAlive', () => {
+    test('should return health status', async () => {
       const response = await request(app)
-        .get('/is-alive')
+        .get('/isAlive')
         .expect(200);
       expect(response.text).toBe('OK');
     });

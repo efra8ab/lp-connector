@@ -11,10 +11,26 @@ The goal of this fork is to add LeadPerfection-specific connector behavior on to
 - call logging into LeadPerfection
 - future extension support for additional CRM workflows
 
+## Development prerequisites
+
+This project uses Node.js 24 and pnpm 10.34.0. With `nvm` and Corepack
+available, activate the required toolchain with:
+
+```bash
+nvm use
+corepack enable
+pnpm --version
+```
+
+The reported pnpm version should be `10.34.0`.
+
 ## Current status
 
-Phase 0 development is complete. The connector has passed automated tests and
-controlled production checks, but it has not yet been tested by a Discountbath
+Phase 0 development is complete, and management has approved moving into
+deployment preparation and controlled testing. The local and CI toolchain is
+now standardized on Node.js 24 and pnpm 10.34.0, with frozen dependency installs
+and the complete automated test command verified locally: 53 suites and 1,320
+tests pass. The connector has not yet been deployed or tested by a Discountbath
 agent during a full day of live calls. The connector can:
 
 - connect to the LeadPerfection production environment
@@ -25,9 +41,9 @@ agent during a full day of live calls. The connector can:
 - save agent notes to the LeadPerfection Notes tab through `AddNotes`
 
 The executive report and demonstration video were sent to the boss on August 6,
-2026. The project is waiting for approval of lean production hosting and a
-one-agent browser pilot. Wider rollout should happen only after that pilot is
-reviewed successfully.
+2026. Approval to begin deployment preparation and a one-agent browser pilot was
+confirmed on August 28, 2026. Wider rollout should happen only after that pilot
+is reviewed successfully.
 
 ## Production hosting direction
 

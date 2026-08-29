@@ -13,7 +13,7 @@
         }
     ],
     "paths": {
-        "/is-alive": {
+        "/isAlive": {
             "get": {
                 "summary": "Check alive",
                 "tags": [],

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Runs root and core package tests, then prints an overall summary.
+ * Runs root, core, and template package tests, then prints an overall summary.
  */
 
 const { spawn } = require('child_process');
@@ -9,6 +9,7 @@ const path = require('path');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const CORE_DIR = path.join(ROOT_DIR, 'packages/core');
+const TEMPLATE_DIR = path.join(ROOT_DIR, 'packages/template');
 
 // Parse Jest summary from output (e.g. "Test Suites: 13 passed, 13 total" and "Tests: 616 passed, 616 total")
 function parseJestSummary(output) {
@@ -27,21 +28,15 @@ function parseJestSummary(output) {
     };
 }
 
-function runJest(cwd, npmArgs, jestArgs = [], summaryFilePath = null) {
+function runJest(cwd, jestArgs = [], summaryFilePath = null) {
     return new Promise((resolve, reject) => {
         const env = { ...process.env, NODE_ENV: 'test' };
-        const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-        const runArgs = [...npmArgs];
+        const pnpmExecutable = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
-        if (jestArgs.length > 0) {
-            runArgs.push('--', ...jestArgs);
-        }
-
-        const child = spawn(npmExecutable, ['run', ...runArgs], {
+        const child = spawn(pnpmExecutable, ['exec', 'jest', ...jestArgs], {
             cwd,
             env,
             stdio: 'inherit',
-            shell: true,
         });
 
         child.on('close', (code) => {
@@ -65,7 +60,7 @@ function runJest(cwd, npmArgs, jestArgs = [], summaryFilePath = null) {
                         testsTotal: jestJson.numTotalTests || 0,
                         testsFailed: jestJson.numFailedTests || 0,
                     };
-                } catch (err) {
+                } catch {
                     // Fallback to zeroed summary if JSON output cannot be parsed.
                     summary = parseJestSummary('');
                 }
@@ -74,7 +69,7 @@ function runJest(cwd, npmArgs, jestArgs = [], summaryFilePath = null) {
             if (summaryFilePath) {
                 try {
                     fs.unlinkSync(summaryFilePath);
-                } catch (err) {
+                } catch {
                     // Ignore temp file cleanup issues.
                 }
             }
@@ -91,30 +86,34 @@ async function main() {
     fs.mkdirSync(summaryDir, { recursive: true });
     const rootSummaryFile = path.join(summaryDir, 'root-jest-summary.json');
     const coreSummaryFile = path.join(summaryDir, 'core-jest-summary.json');
+    const templateSummaryFile = path.join(summaryDir, 'template-jest-summary.json');
 
     console.log('\n--- Root tests (server) ---\n');
     const rootResult = await runJest(
         ROOT_DIR,
-        ['test:root'],
-        ['--json', `--outputFile=${rootSummaryFile}`],
+        ['--forceExit', '--runInBand', '--json', `--outputFile=${rootSummaryFile}`],
         rootSummaryFile
     );
 
     console.log('\n--- Core package tests (@app-connect/core) ---\n');
     const coreResult = await runJest(
-        ROOT_DIR,
-        ['test', '--workspace=@app-connect/core'],
+        CORE_DIR,
         ['--runInBand', '--json', `--outputFile=${coreSummaryFile}`],
         coreSummaryFile
     );
 
+    console.log('\n--- Template package tests (@app-connect/template) ---\n');
+    const templateResult = await runJest(
+        TEMPLATE_DIR,
+        ['--runInBand', '--json', `--outputFile=${templateSummaryFile}`],
+        templateSummaryFile
+    );
+
     // Overall summary
-    const totalSuitesPassed = rootResult.summary.suitesPassed + coreResult.summary.suitesPassed;
-    const totalSuitesFailed = rootResult.summary.suitesFailed + coreResult.summary.suitesFailed;
-    const totalSuites = rootResult.summary.suitesTotal + coreResult.summary.suitesTotal;
-    const totalTestsPassed = rootResult.summary.testsPassed + coreResult.summary.testsPassed;
-    const totalTestsFailed = rootResult.summary.testsFailed + coreResult.summary.testsFailed;
-    const totalTests = rootResult.summary.testsTotal + coreResult.summary.testsTotal;
+    const totalSuitesPassed = rootResult.summary.suitesPassed + coreResult.summary.suitesPassed + templateResult.summary.suitesPassed;
+    const totalSuitesFailed = rootResult.summary.suitesFailed + coreResult.summary.suitesFailed + templateResult.summary.suitesFailed;
+    const totalTestsPassed = rootResult.summary.testsPassed + coreResult.summary.testsPassed + templateResult.summary.testsPassed;
+    const totalTestsFailed = rootResult.summary.testsFailed + coreResult.summary.testsFailed + templateResult.summary.testsFailed;
 
     const hasFailed = totalSuitesFailed > 0 || totalTestsFailed > 0;
 
@@ -131,14 +130,18 @@ async function main() {
 
     const rootFailed = rootResult.summary.suitesFailed > 0 || rootResult.summary.testsFailed > 0;
     const coreFailed = coreResult.summary.suitesFailed > 0 || coreResult.summary.testsFailed > 0;
+    const templateFailed = templateResult.summary.suitesFailed > 0 || templateResult.summary.testsFailed > 0;
 
     const rootStatus = rootFailed ? `${RED}${BOLD}[FAILED]${RESET}` : `${GREEN}[OK]${RESET}`;
     const coreStatus = coreFailed ? `${RED}${BOLD}[FAILED]${RESET}` : `${GREEN}[OK]${RESET}`;
+    const templateStatus = templateFailed ? `${RED}${BOLD}[FAILED]${RESET}` : `${GREEN}[OK]${RESET}`;
 
     console.log(`Root (server):          ${rootStatus} ${rootResult.summary.suitesPassed} suites, ${rootResult.summary.testsPassed} tests passed` +
         (rootFailed ? `  ${RED}${BOLD}(${rootResult.summary.suitesFailed} suites, ${rootResult.summary.testsFailed} tests FAILED)${RESET}` : ''));
     console.log(`Core (@app-connect/core): ${coreStatus} ${coreResult.summary.suitesPassed} suites, ${coreResult.summary.testsPassed} tests passed` +
         (coreFailed ? `  ${RED}${BOLD}(${coreResult.summary.suitesFailed} suites, ${coreResult.summary.testsFailed} tests FAILED)${RESET}` : ''));
+    console.log(`Template:              ${templateStatus} ${templateResult.summary.suitesPassed} suites, ${templateResult.summary.testsPassed} tests passed` +
+        (templateFailed ? `  ${RED}${BOLD}(${templateResult.summary.suitesFailed} suites, ${templateResult.summary.testsFailed} tests FAILED)${RESET}` : ''));
 
     console.log('-'.repeat(60));
     console.log(`Total:                  ${totalSuitesPassed} suites, ${totalTestsPassed} tests passed`);
@@ -152,7 +155,9 @@ async function main() {
 
     console.log('='.repeat(60) + '\n');
 
-    const exitCode = rootResult.code !== 0 || coreResult.code !== 0 ? 1 : 0;
+    fs.rmSync(summaryDir, { recursive: true, force: true });
+
+    const exitCode = rootResult.code !== 0 || coreResult.code !== 0 || templateResult.code !== 0 ? 1 : 0;
     process.exit(exitCode);
 }
 

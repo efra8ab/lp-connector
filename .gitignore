@@ -40,3 +40,12 @@ Discountbath-LeadPerfection-Connector-Executive-Report.pdf
 docs/leadperfection-connector-executive-report.md
 docs/leadperfection-connector-video-script.md
 docs/developers/leadperfection-production-hosting.md
+
+# Local generated state and review-only cleanup holding area
+/deleteme/
+/.dynamodb/
+/.pnpm-store/
+/.tmp-test-summaries/
+/output/
+/tmp/
+/.claude/settings.local.json

@@ -28,13 +28,19 @@ rc-unified-crm-extension/
 
 | Command | Scope |
 |---|---|
-| `npm test` | All tests (root + core), combined summary |
-| `npm run test:root` | Root integration tests only |
-| `npm test --workspace=@app-connect/core` | Core unit tests only |
-| `npm run test:coverage` | All tests with coverage report |
-| `npm run test:watch --workspace=@app-connect/core` | Watch mode for core |
+| `pnpm test` | Root + core + template tests, combined summary; this is the CI command |
+| `pnpm test:root` | Root integration tests only |
+| `pnpm --dir packages/core test` | Core unit tests only |
+| `pnpm --dir packages/template test` | Template smoke tests only |
+| `pnpm test-coverage` | Root tests with coverage |
+| `pnpm --dir packages/core test:coverage` | Core tests with coverage |
+| `pnpm --dir packages/core test:watch` | Watch mode for core |
 
-**Environment**: Tests automatically load `packages/core/.env.test` (for core) or `.env.test` at repo root (for integration tests). Never modify production `.env` for tests.
+**Environment**: Use Node.js 24 and pnpm 10.34.0. Tests automatically load
+`packages/core/.env.test` (for core), `.env.test` at repo root (for integration
+tests), or `packages/template/.env.test` (for the template). Never modify
+production `.env` for tests. Root and core tests use in-memory SQLite so test
+state does not leak between runs.
 
 ## Test Type Decision
 
@@ -162,7 +168,7 @@ Error returns must use `{ success: false, error: '...' }` shape; success returns
 
 1. Run the specific file in isolation first:
    ```bash
-   npx jest packages/core/test/mcp/tools/createCallLog.test.js --no-coverage
+   pnpm --dir packages/core exec jest test/mcp/tools/createCallLog.test.js --no-coverage
    ```
 2. Read the failure message carefully — most failures are either:
    - A mock not set up (`undefined is not a function`) → add/fix `jest.mock()`.
@@ -170,7 +176,7 @@ Error returns must use `{ success: false, error: '...' }` shape; success returns
    - `nock: No match for request` → the interceptor URL/method/body doesn't match the real call.
 3. Use `--verbose` to see individual test names:
    ```bash
-   npx jest tests/connectors/pipedrive.int.test.js --verbose --no-coverage
+   pnpm exec jest tests/connectors/pipedrive.int.test.js --verbose --no-coverage
    ```
 4. Check `packages/core/.env.test` is present and `DATABASE_URL='sqlite::memory:'` is set.
 
@@ -218,13 +224,16 @@ Before touching anything, decide which side is wrong. Getting this wrong wastes 
 
 ## Coverage
 
-The core package collects coverage automatically. View the HTML report after running:
+Coverage is opt-in. View the core HTML report after running:
 ```bash
-npm run test:coverage --workspace=@app-connect/core
-# Report at packages/core/coverage/index.html
+pnpm --dir packages/core test:coverage
+# Report at packages/core/coverage/lcov-report/index.html
 ```
 
-Target: keep coverage stable or improving — CI runs `npm run test-coverage` on every push and PR.
+Target: keep coverage stable or improving. CI runs `pnpm test` without coverage
+on every push and pull request; run coverage separately when needed. Legacy
+coverage mode may leave open handles under Node.js 24, so do not use it as the
+deployment readiness gate until that issue is resolved.
 
 ## Additional Reference
 

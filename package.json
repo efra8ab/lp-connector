@@ -3,6 +3,11 @@
   "version": "1.7.25",
   "description": "RingCentral App Connect",
   "main": "index.js",
+  "packageManager": "pnpm@10.34.0",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "10.x"
+  },
   "bin": {
     "rc-unified-crm-extension": "bin/index.js"
   },
@@ -13,12 +18,13 @@
   "scripts": {
     "ngrok": "ngrok http 6066 ",
     "tunnel": "lite-http-tunnel start 6066 -p crm",
+    "dev": "nodemon ./src/server.js",
     "server": "nodemon ./src/server.js",
-    "start": "npm run server",
+    "start": "node ./src/server.js",
     "start-debug": "node --inspect ./src/server.js",
     "test": "node scripts/run-tests.js",
-    "test:root": "set NODE_ENV=test&&jest --forceExit -i",
-    "test-coverage": "set NODE_ENV=test&&jest --coverage --runInBand && npm run test:coverage --workspace=@app-connect/core",
+    "test:root": "jest --forceExit --runInBand",
+    "test-coverage": "jest --coverage --runInBand",
     "build-local": "node ./scripts/build",
     "build": "node ./scripts/serverless-build",
     "deploy": "node ./scripts/serverless-deploy",
@@ -55,7 +61,8 @@
     "pg": "^8.8.0",
     "sequelize": "^6.29.0",
     "serverless-http": "^3.0.3",
-    "shortid": "^2.2.17"
+    "shortid": "^2.2.17",
+    "@app-connect/core": "workspace:*"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",

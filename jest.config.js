@@ -16,6 +16,7 @@ module.exports = {
   coveragePathIgnorePatterns: ['/node_modules/', '/packages/'],
   modulePathIgnorePatterns: [
     '<rootDir>/build/',
+    '<rootDir>/deleteme/',
     '<rootDir>/serverless-deploy/',
     '<rootDir>/serverless-deploy-test/',
     '<rootDir>/serverless-deploy-test-beta/'

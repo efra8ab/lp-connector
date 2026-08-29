@@ -24,23 +24,33 @@ rc-unified-crm-extension/
 
 ```bash
 # Run all tests
-npm test
+pnpm test
 
 # Run only root tests
-npm run test:root
+pnpm test:root
 
 # Run only core package tests
-npm run test --workspace=@app-connect/core
+pnpm --dir packages/core test
 
-# Run with coverage
-npm run test-coverage
+# Run only template package tests
+pnpm --dir packages/template test
+
+# Run root coverage
+pnpm test-coverage
+
+# Run core coverage
+pnpm --dir packages/core test:coverage
 
 # Run specific test file
-npx jest path/to/test.js
+pnpm exec jest path/to/test.js
 
 # Run in watch mode
-npx jest --watch
+pnpm exec jest --watch
 ```
+
+Use Node.js 24 and pnpm 10.34.0. `pnpm test` is the same command used by
+GitHub Actions and runs the root server, core package, and template package test
+suites in sequence.
 
 ## Jest Configuration
 
@@ -253,13 +263,19 @@ module.exports = {
 
 Run coverage report:
 ```bash
-npm run test-coverage
+pnpm test-coverage
+pnpm --dir packages/core test:coverage
 ```
 
-Coverage output in `coverage/` directory:
+Coverage output is generated under `coverage/` for root tests and
+`packages/core/coverage/` for core tests:
 - `lcov-report/index.html` - HTML report
 - `coverage-final.json` - JSON data
 - `lcov.info` - LCOV format
+
+Normal `pnpm test` and GitHub CI runs do not collect coverage. Coverage is an
+explicit diagnostic command because legacy coverage mode can leave open handles
+under Node.js 24.
 
 ## Best Practices
 
@@ -269,4 +285,3 @@ Coverage output in `coverage/` directory:
 4. **Descriptive names** - `it('should return 404 when contact not found')`
 5. **Test edge cases** - Empty arrays, null values, error states
 6. **Avoid testing implementation** - Test behavior, not internals
-

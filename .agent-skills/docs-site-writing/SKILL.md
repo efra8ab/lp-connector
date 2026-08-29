@@ -7,7 +7,9 @@ description: Use this skill when writing or revising content inside `rc-unified-
 
 Use this skill for pages that live inside `rc-unified-crm-extension/docs`.
 
-This skill is for the public-facing docs site, not the repo-level internal docs in the monorepo root `docs/` folder.
+This skill is for public pages included by `mkdocs.yml`. Project-only planning
+documents may also live under `docs/`; do not apply public-site conventions to
+an internal file unless it is part of the MkDocs navigation.
 
 ## Goal
 
