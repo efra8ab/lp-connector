@@ -30,6 +30,7 @@ beforeAll(async () => {
     const { CacheModel } = require('../models/cacheModel');
     const { AdminConfigModel } = require('../models/adminConfigModel');
     const { AccountDataModel } = require('../models/accountDataModel');
+    const { TokenRefreshLockModel } = require('../models/tokenRefreshLockModel');
 
     // Sync database models
     await CallLogModel.sync({ force: true });
@@ -38,6 +39,7 @@ beforeAll(async () => {
     await CacheModel.sync({ force: true });
     await AdminConfigModel.sync({ force: true });
     await AccountDataModel.sync({ force: true });
+    await TokenRefreshLockModel.sync({ force: true });
 
     console.log('Database models synced for testing');
   } catch (error) {

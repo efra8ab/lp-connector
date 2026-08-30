@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+#
+# The region cannot be changed after these resources are created. Virginia is
+# selected for a US-East client deployment; confirm it in the meeting before
+# applying this Blueprint.
+
+services:
+  - type: web
+    name: discountbath-lp-connector
+    runtime: node
+    plan: 0.5c-512mb
+    region: virginia
+    branch: main
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: pnpm start
+    healthCheckPath: /isAlive
+    # Public-repository URL deployments do not use a member's Git credential.
+    # GitHub Actions triggers the narrow deploy hook after the full test gate.
+    autoDeployTrigger: "off"
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: IS_PROD
+        value: "true"
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: APP_SERVER
+        fromService:
+          type: web
+          name: discountbath-lp-connector
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: discountbath-lp-db
+          property: connectionString
+      - key: DB_SSL
+        value: "false"
+      - key: APP_SERVER_SECRET_KEY
+        generateValue: true
+      - key: HASH_KEY
+        generateValue: true
+      - key: LP_BASE_URL
+        sync: false
+      - key: LP_CLIENT_ID
+        sync: false
+      - key: LP_APPKEY
+        sync: false
+      - key: LP_EMPLOYEE_ID
+        sync: false
+      - key: LP_DEFAULT_RESULT_CODE
+        value: NA
+      - key: LP_DEFAULT_CALL_TYPE
+        value: O
+      - key: LP_INBOUND_CALL_TYPE
+        value: I
+      - key: LP_OUTBOUND_CALL_TYPE
+        value: O
+
+databases:
+  - name: discountbath-lp-db
+    region: virginia
+    plan: 0.1c-256mb
+    diskSizeGB: 1
+    postgresMajorVersion: "18"
+    databaseName: lp_connector
+    user: lp_connector
+    ipAllowList: []
+    storageAutoscalingEnabled: false

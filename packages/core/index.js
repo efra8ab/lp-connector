@@ -14,6 +14,7 @@ const { MessageLogModel } = require('./models/messageLogModel');
 const { AdminConfigModel } = require('./models/adminConfigModel');
 const { CacheModel } = require('./models/cacheModel');
 const { AccountDataModel } = require('./models/accountDataModel');
+const { TokenRefreshLockModel } = require('./models/tokenRefreshLockModel');
 const jwt = require('./lib/jwt');
 const logCore = require('./handlers/log');
 const contactCore = require('./handlers/contact');
@@ -75,6 +76,7 @@ async function initDB() {
         await CacheModel.sync();
         await CallDownListModel.sync();
         await AccountDataModel.sync();
+        await TokenRefreshLockModel.sync();
 
         // if UserModel doesn't have hashedRcExtensionId column, add it
         const queryInterface = UserModel.sequelize.getQueryInterface();

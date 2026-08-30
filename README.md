@@ -29,7 +29,7 @@ The reported pnpm version should be `10.34.0`.
 Phase 0 development is complete, and management has approved moving into
 deployment preparation and controlled testing. The local and CI toolchain is
 now standardized on Node.js 24 and pnpm 10.34.0, with frozen dependency installs
-and the complete automated test command verified locally: 53 suites and 1,320
+and the complete automated test command verified locally: 54 suites and 1,326
 tests pass. The connector has not yet been deployed or tested by a Discountbath
 agent during a full day of live calls. The connector can:
 
@@ -47,25 +47,34 @@ is reviewed successfully.
 
 ## Production hosting direction
 
-The target production architecture is one Render web service and one paid
-Render Postgres database. The goal is to give the client one provider, one
-account, and one operational interface for the application, database, backups,
-secrets, and logs.
+Production will run in a dedicated, client-owned Render workspace managed by
+the assistant owner. The pilot uses a single-member Hobby workspace, one paid
+always-on Node.js web service, and one paid Render Postgres database. The
+developer does not need a paid Render seat: this public repository can deploy
+automatically from `main` after GitHub checks pass.
 
-The upstream RingCentral framework uses AWS DynamoDB for short-lived
-token-refresh locks. This is internal connector infrastructure; it is not part
-of LeadPerfection and was not configured by LeadPerfection. Before deploying to
-Render, replace the LeadPerfection connector's DynamoDB token lock with an
-atomic, expiring lock stored in the same Postgres database. Audit the active
-LeadPerfection runtime paths for any other DynamoDB dependency and validate
-concurrent and expired-token refresh behavior before removing AWS configuration.
+The root `render.yaml` defines both resources, their private database
+connection, generated application secrets, the `/isAlive` health check, and
+the production start command. No hosting account, web service, or cloud
+database has been created yet; those will be created with the assistant owner
+during the client meeting.
 
-This infrastructure change must not alter the LeadPerfection API contract,
-credentials, AppKey permissions, contacts, calls, notes, or workflows.
+Before applying the Blueprint, confirm that Virginia is the intended permanent
+region and that LeadPerfection accepts Render's shared outbound IP ranges. A
+dedicated outbound IP changes the Render workspace requirements and cost.
 
-See
-[LeadPerfection production hosting](docs/developers/leadperfection-production-hosting.md)
-for the architecture decision and deployment checklist.
+The LeadPerfection token-refresh lock has been moved from the upstream
+framework's DynamoDB mechanism to an atomic, expiring PostgreSQL lock with
+owner-checked release. The active LeadPerfection paths do not require AWS or
+DynamoDB configuration when optional framework caching and proxy features are
+disabled. This infrastructure change does not alter LeadPerfection's API,
+credentials, permissions, contacts, calls, notes, or agent workflow.
+
+The tracked [Render client deployment
+runbook](docs/developers/render-client-deployment.md) contains the exact
+pre-meeting preparation, meeting sequence, ownership boundary, acceptance
+checklist, and post-deployment tests. The local working-copy hosting note
+contains the historical provider comparison and deeper project context.
 
 ## Upstream framework
 

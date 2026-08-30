@@ -1,9 +1,14 @@
 /* eslint-disable no-param-reassign */
 const axios = require('axios');
+const { randomUUID } = require('crypto');
 const moment = require('moment');
 const { parsePhoneNumber } = require('awesome-phonenumber');
 const { UserModel } = require('@app-connect/core/models/userModel');
-const { Lock } = require('@app-connect/core/models/dynamo/lockSchema');
+const {
+    acquireTokenRefreshLock,
+    getTokenRefreshLock,
+    releaseTokenRefreshLock
+} = require('@app-connect/core/models/tokenRefreshLockModel');
 const { LOG_DETAILS_FORMAT_TYPE } = require('@app-connect/core/lib/constants');
 const logger = require('@app-connect/core/lib/logger');
 const { handleDatabaseError } = require('@app-connect/core/lib/errorHandler');
@@ -231,70 +236,57 @@ async function saveUserSession(user, authData) {
 }
 
 async function withTokenLock(user, tokenLockTimeout, refreshFn, skipLock = false) {
-    let newLock;
-    const dateNow = moment();
+    if (skipLock) {
+        return refreshFn();
+    }
+
+    const ownerId = randomUUID();
+    let ownsLock = await acquireTokenRefreshLock({
+        userId: user.id,
+        ownerId,
+        ttlSeconds: LP_TOKEN_LOCK_TTL_SECONDS
+    });
+
+    const timeoutMs = Math.max(0, Number(tokenLockTimeout) * 1000);
+    const deadline = Date.now() + timeoutMs;
+    let delay = 500;
+    const maxDelay = 8000;
+
     try {
-        if (!skipLock) {
-            try {
-                newLock = await Lock.create(
-                    {
-                        userId: user.id,
-                        ttl: dateNow.unix() + LP_TOKEN_LOCK_TTL_SECONDS
-                    },
-                    {
-                        overwrite: false
-                    }
-                );
+        while (!ownsLock && Date.now() < deadline) {
+            const lock = await getTokenRefreshLock(user.id);
+            if (!lock) {
+                return UserModel.findByPk(user.id);
             }
-            catch (error) {
-                if (error.name !== 'ConditionalCheckFailedException'
-                    && error.__type !== 'com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException') {
-                    throw error;
+
+            const expiresAt = Number(lock.expiresAt);
+            if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+                ownsLock = await acquireTokenRefreshLock({
+                    userId: user.id,
+                    ownerId,
+                    ttlSeconds: LP_TOKEN_LOCK_TTL_SECONDS
+                });
+                if (ownsLock) {
+                    break;
                 }
-                let lock = await Lock.get({ userId: user.id });
-                if (lock && lock.ttl && Number(lock.ttl) < dateNow.unix()) {
-                    try {
-                        await lock.delete();
-                        newLock = await Lock.create(
-                            {
-                                userId: user.id,
-                                ttl: dateNow.unix() + LP_TOKEN_LOCK_TTL_SECONDS
-                            },
-                            {
-                                overwrite: false
-                            }
-                        );
-                    }
-                    catch (error2) {
-                        if (error2.name !== 'ConditionalCheckFailedException'
-                            && error2.__type !== 'com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException') {
-                            throw error2;
-                        }
-                        lock = await Lock.get({ userId: user.id });
-                    }
-                }
-                if (lock && !newLock) {
-                    let processTime = 0;
-                    let delay = 500;
-                    const maxDelay = 8000;
-                    while (lock && processTime < tokenLockTimeout) {
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                        processTime += delay / 1000;
-                        delay = Math.min(delay * 2, maxDelay);
-                        lock = await Lock.get({ userId: user.id });
-                    }
-                    if (processTime >= tokenLockTimeout) {
-                        throw new Error('LeadPerfection token lock timeout');
-                    }
-                    return UserModel.findByPk(user.id);
-                }
+            }
+
+            const remainingMs = deadline - Date.now();
+            if (remainingMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, Math.min(delay, remainingMs)));
+                delay = Math.min(delay * 2, maxDelay);
             }
         }
+
+        if (!ownsLock) {
+            throw new Error('LeadPerfection token lock timeout');
+        }
+
         return await refreshFn();
     }
     finally {
-        if (newLock) {
-            await newLock.delete();
+        if (ownsLock) {
+            await releaseTokenRefreshLock({ userId: user.id, ownerId });
         }
     }
 }

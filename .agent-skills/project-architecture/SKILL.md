@@ -187,6 +187,12 @@ migrated separately.
 - **Development**: SQLite (`db.sqlite`) or PostgreSQL, according to `.env`
 - **Automated tests**: In-memory SQLite; tests must not reuse `db.sqlite`
 - **Production**: PostgreSQL via Sequelize ORM
-- **Cache/Locks**: DynamoDB (local via `pnpm dynamo-local`); the
-  LeadPerfection production plan is to replace its token-refresh lock with an
-  atomic expiring lock in PostgreSQL before Render deployment
+- **Cache/Locks**: The upstream framework supports DynamoDB (local via
+  `pnpm dynamo-local`) for optional proxy/cache paths. LeadPerfection uses an
+  atomic, expiring PostgreSQL token-refresh lock in production and therefore
+  does not need AWS/DynamoDB configuration when those optional paths are off.
+- **Production hosting**: A client-owned Render Hobby workspace managed by the
+  assistant owner, with one paid web service and one paid Render Postgres
+  database created from the root `render.yaml`. Normal releases deploy from
+  public GitHub `main` after checks pass, so the developer does not need a
+  Render workspace seat.

@@ -10,14 +10,17 @@ jest.mock('@app-connect/core/models/userModel', () => ({
     }
 }));
 
-jest.mock('@app-connect/core/models/dynamo/lockSchema', () => ({
-    Lock: {
-        create: jest.fn(),
-        get: jest.fn()
-    }
+jest.mock('@app-connect/core/models/tokenRefreshLockModel', () => ({
+    acquireTokenRefreshLock: jest.fn(),
+    getTokenRefreshLock: jest.fn(),
+    releaseTokenRefreshLock: jest.fn()
 }));
 
-const { Lock } = require('@app-connect/core/models/dynamo/lockSchema');
+const {
+    acquireTokenRefreshLock,
+    getTokenRefreshLock,
+    releaseTokenRefreshLock
+} = require('@app-connect/core/models/tokenRefreshLockModel');
 
 describe('LeadPerfection Connector', () => {
     const baseUrl = 'https://apitest.leadperfection.com';
@@ -31,6 +34,9 @@ describe('LeadPerfection Connector', () => {
         process.env.LP_BASE_URL = baseUrl;
         process.env.LP_CLIENT_ID = 'demo3';
         process.env.LP_APPKEY = 'test-app-key';
+        acquireTokenRefreshLock.mockResolvedValue(true);
+        getTokenRefreshLock.mockResolvedValue(null);
+        releaseTokenRefreshLock.mockResolvedValue(1);
 
         mockUser = createMockUser({
             id: '77-leadperfection',
@@ -136,8 +142,6 @@ describe('LeadPerfection Connector', () => {
 
     test('checkAndRefreshAccessToken refreshes an expired token', async () => {
         mockUser.tokenExpiry = new Date(Date.now() - 60 * 1000);
-        const deleteMock = jest.fn().mockResolvedValue(true);
-        Lock.create.mockResolvedValue({ delete: deleteMock });
 
         nock(baseUrl)
             .post('/token')
@@ -152,7 +156,86 @@ describe('LeadPerfection Connector', () => {
         expect(result.accessToken).toBe('new-access-token');
         expect(result.refreshToken).toBe('new-refresh-token');
         expect(mockUser.save).toHaveBeenCalled();
-        expect(deleteMock).toHaveBeenCalled();
+        expect(releaseTokenRefreshLock).toHaveBeenCalledWith({
+            userId: mockUser.id,
+            ownerId: expect.any(String)
+        });
+    });
+
+    test('simultaneous refresh attempts perform only one token request', async () => {
+        mockUser.tokenExpiry = new Date(Date.now() - 60 * 1000);
+        let released = false;
+        acquireTokenRefreshLock
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+        getTokenRefreshLock.mockImplementation(async () => (
+            released ? null : { expiresAt: Date.now() + 30000 }
+        ));
+        releaseTokenRefreshLock.mockImplementation(async () => {
+            released = true;
+            return 1;
+        });
+        const findByPk = require('@app-connect/core/models/userModel').UserModel.findByPk;
+        findByPk.mockImplementation(async () => mockUser);
+
+        const tokenScope = nock(baseUrl)
+            .post('/token')
+            .once()
+            .delay(25)
+            .reply(200, {
+                access_token: 'one-shared-access-token',
+                refresh_token: 'one-shared-refresh-token',
+                expires_in: 86400
+            });
+
+        const [firstResult, secondResult] = await Promise.all([
+            leadperfection.checkAndRefreshAccessToken({}, mockUser),
+            leadperfection.checkAndRefreshAccessToken({}, mockUser)
+        ]);
+
+        expect(tokenScope.isDone()).toBe(true);
+        expect(firstResult.accessToken).toBe('one-shared-access-token');
+        expect(secondResult.accessToken).toBe('one-shared-access-token');
+        expect(mockUser.save).toHaveBeenCalledTimes(1);
+    });
+
+    test('takes over an expired token lock atomically', async () => {
+        mockUser.tokenExpiry = new Date(Date.now() - 60 * 1000);
+        acquireTokenRefreshLock
+            .mockResolvedValueOnce(false)
+            .mockResolvedValueOnce(true);
+        getTokenRefreshLock.mockResolvedValue({
+            expiresAt: Date.now() - 1000
+        });
+
+        nock(baseUrl)
+            .post('/token')
+            .once()
+            .reply(200, {
+                access_token: 'takeover-access-token',
+                refresh_token: 'takeover-refresh-token',
+                expires_in: 86400
+            });
+
+        const result = await leadperfection.checkAndRefreshAccessToken({}, mockUser);
+
+        expect(result.accessToken).toBe('takeover-access-token');
+        expect(acquireTokenRefreshLock).toHaveBeenCalledTimes(2);
+        expect(releaseTokenRefreshLock).toHaveBeenCalledTimes(1);
+    });
+
+    test('times out while another request keeps an active token lock', async () => {
+        mockUser.tokenExpiry = new Date(Date.now() - 60 * 1000);
+        acquireTokenRefreshLock.mockResolvedValue(false);
+        getTokenRefreshLock.mockResolvedValue({
+            expiresAt: Date.now() + 30000
+        });
+
+        await expect(
+            leadperfection.checkAndRefreshAccessToken({}, mockUser, 0.01)
+        ).rejects.toThrow('LeadPerfection token lock timeout');
+
+        expect(releaseTokenRefreshLock).not.toHaveBeenCalled();
     });
 
     test('authValidation succeeds with a no-op GetCustomers3 request', async () => {
