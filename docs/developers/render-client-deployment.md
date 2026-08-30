@@ -50,6 +50,11 @@ make this the single go/no-go decision before applying the paid Blueprint.
 
 ### Developer prepares
 
+- Open the repository's **Actions** tab and enable workflows for this fork.
+  GitHub does not run workflows in a new fork until its owner accepts the
+  one-time acknowledgement. Then open the **Tests** workflow and choose **Run
+  workflow** on `main`; it must pass before the meeting. Because the Render hook
+  does not exist yet, the deploy step safely skips.
 - Make sure all automated tests pass and the deployment changes are pushed to
   `main` before the meeting.
 - Keep the production values below available in a password manager or another
@@ -128,6 +133,8 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
 - [ ] `/isAlive` returns HTTP 200 and `OK` from the Render URL.
 - [ ] The outbound IP ranges are recorded and the static-IP question is closed.
 - [ ] `RENDER_DEPLOY_HOOK_URL` is stored only as an encrypted GitHub secret.
+- [ ] GitHub Actions is enabled for this fork and the **Tests** workflow passes
+      on `main`.
 - [ ] Render automatic deploy is off; the GitHub test workflow triggers the
       hook only after tests pass on `main`.
 - [ ] The assistant owner knows where to view logs, redeploy, roll back, and
