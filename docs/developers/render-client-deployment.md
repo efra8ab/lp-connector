@@ -105,10 +105,10 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
    repository secret named `RENDER_DEPLOY_HOOK_URL`. Do this during screen share
    without sending it through chat or email. The service should keep automatic
    deploys **off** because the GitHub test workflow triggers this hook itself.
-10. Pushes to `main` now run tests and request deployment of that exact tested
-    commit only after they pass. Confirm the GitHub Actions workflow recognizes
-    the secret; the actual post-meeting code push will provide the final
-    end-to-end proof.
+10. Open GitHub **Actions > Tests**, choose **Run workflow**, and select `main`.
+    The workflow runs the full test gate and requests deployment of that exact
+    tested commit only after the tests pass. Confirm the Render Events page
+    records the requested deployment.
 11. Bookmark the web service, database, logs, events, environment, and recovery
     pages for the assistant owner.
 
@@ -129,7 +129,8 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
 - [ ] GitHub Actions is enabled for this fork and the **Tests** workflow passes
       on `main`.
 - [ ] Render automatic deploy is off; the GitHub test workflow triggers the
-      hook only after tests pass on `main`.
+      hook only after tests pass on a `main` push or an owner-triggered manual
+      run of the **Tests** workflow.
 - [ ] The assistant owner knows where to view logs, redeploy, roll back, and
       access database recovery.
 
