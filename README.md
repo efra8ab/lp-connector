@@ -59,9 +59,9 @@ the production start command. No hosting account, web service, or cloud
 database has been created yet; those will be created with the assistant owner
 during the client meeting.
 
-Before applying the Blueprint, confirm that Virginia is the intended permanent
-region and that LeadPerfection accepts Render's shared outbound IP ranges. A
-dedicated outbound IP changes the Render workspace requirements and cost.
+The permanent deployment region is Ohio, selected to balance the client's
+Colorado agents with LeadPerfection's central-US production endpoints. A
+dedicated outbound IP is not expected to be necessary.
 
 The LeadPerfection token-refresh lock has been moved from the upstream
 framework's DynamoDB mechanism to an atomic, expiring PostgreSQL lock with

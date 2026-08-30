@@ -1,15 +1,15 @@
 # yaml-language-server: $schema=https://render.com/schema/render.yaml.json
 #
-# The region cannot be changed after these resources are created. Virginia is
-# selected for a US-East client deployment; confirm it in the meeting before
-# applying this Blueprint.
+# The region cannot be changed after these resources are created. Ohio is
+# selected to balance the client's Colorado agents with LeadPerfection's
+# production endpoints in the central United States.
 
 services:
   - type: web
     name: discountbath-lp-connector
     runtime: node
     plan: 0.5c-512mb
-    region: virginia
+    region: ohio
     branch: main
     buildCommand: corepack enable && pnpm install --frozen-lockfile
     startCommand: pnpm start
@@ -59,7 +59,7 @@ services:
 
 databases:
   - name: discountbath-lp-db
-    region: virginia
+    region: ohio
     plan: 0.1c-256mb
     diskSizeGB: 1
     postgresMajorVersion: "18"

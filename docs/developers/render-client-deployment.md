@@ -30,23 +30,15 @@ cannot read logs, secrets, billing, or database data.
 - A secure place for recovery codes.
 - Permission to enter the four LeadPerfection application settings listed
   below. Do not send the AppKey through ordinary email or chat.
-- A decision on the deployment region. `render.yaml` currently selects
-  **Virginia (US East)**. Render regions cannot be changed after resource
-  creation; changing region later requires new resources and a database
-  migration.
-- Confirmation that Render's shared outbound IP ranges are acceptable to
-  LeadPerfection. If LeadPerfection requires one exclusive static IP, stop
-  before purchase because Render requires a more expensive workspace and a
-  dedicated-IP add-on for that feature.
-
-Send this question to LeadPerfection support before the meeting if possible:
-
-> For Discountbath's Client ID, are `/token` and API requests restricted by
-> source IP? If allowlisting is required, can you accept Render's shared
-> Virginia outbound CIDR ranges, or must the integration use one exclusive IP?
-
-Do not include a password or AppKey. If support has not answered by the meeting,
-make this the single go/no-go decision before applying the paid Blueprint.
+- The deployment region is **Ohio**, selected to balance the client's Colorado
+  agents with LeadPerfection's central-US production endpoints. Render regions
+  cannot be changed after resource creation; changing region later requires
+  new resources and a database migration.
+- The accepted project assumption is that Discountbath's LeadPerfection Client
+  ID has no source-IP restriction. Previous production API work did not reveal
+  an IP allowlist requirement. Record Render's shared outbound ranges during
+  setup, but do not purchase a dedicated-IP add-on unless the hosted `/token`
+  or API validation is actually rejected because of source IP.
 
 ### Developer prepares
 
@@ -98,7 +90,7 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
 4. Before applying the Blueprint, review both resources:
    - web service `discountbath-lp-connector` on the paid 0.5 CPU / 512 MB plan;
    - Postgres `discountbath-lp-db` on the paid 0.1 CPU / 256 MB plan with 1 GB;
-   - both resources in Virginia; and
+   - both resources in Ohio; and
    - the total estimated monthly amount shown by Render.
 5. Enter the four `LP_*` values when Render prompts. Keep secret values hidden
    from recordings and screenshots.
@@ -106,7 +98,7 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
    available. The first build can take several minutes.
 7. Open the web service URL plus `/isAlive`. Success is an HTTP 200 response
    with `OK`.
-8. In the web service's network/outbound view, copy the Virginia shared outbound
+8. In the web service's network/outbound view, copy the Ohio shared outbound
    IP ranges into the client's operations record. Send only those ranges—not
    credentials—to LeadPerfection support if allowlisting is needed.
 9. In the web service settings, copy its deploy hook directly into the GitHub
@@ -131,7 +123,8 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
 - [ ] The Blueprint has generated the two application secrets and stored the
       four LeadPerfection settings.
 - [ ] `/isAlive` returns HTTP 200 and `OK` from the Render URL.
-- [ ] The outbound IP ranges are recorded and the static-IP question is closed.
+- [ ] The outbound IP ranges are recorded; no LeadPerfection source-IP
+      restriction is expected.
 - [ ] `RENDER_DEPLOY_HOOK_URL` is stored only as an encrypted GitHub secret.
 - [ ] GitHub Actions is enabled for this fork and the **Tests** workflow passes
       on `main`.
