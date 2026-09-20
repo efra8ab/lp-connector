@@ -11,7 +11,9 @@ services:
     plan: 0.5c-512mb
     region: ohio
     branch: main
-    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    # Render's Node image already exposes pnpm. Running `corepack enable`
+    # attempts to replace /usr/bin/pnpm, which is read-only during builds.
+    buildCommand: pnpm install --frozen-lockfile
     startCommand: pnpm start
     healthCheckPath: /isAlive
     # Public-repository URL deployments do not use a member's Git credential.
