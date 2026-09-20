@@ -26,12 +26,16 @@ The reported pnpm version should be `10.34.0`.
 
 ## Current status
 
-Phase 0 development is complete, and management has approved moving into
-deployment preparation and controlled testing. The local and CI toolchain is
-now standardized on Node.js 24 and pnpm 10.34.0, with frozen dependency installs
-and the complete automated test command verified locally: 54 suites and 1,326
-tests pass. The connector has not yet been deployed or tested by a Discountbath
-agent during a full day of live calls. The connector can:
+Phase 0 development and the initial client-owned Render deployment are
+complete. The paid web service and PostgreSQL database were created in Ohio on
+September 20, 2026, the public `/isAlive` endpoint returned HTTP 200 with `OK`,
+and the GitHub Actions deploy hook successfully requested a deployment of the
+exact tested `main` commit. The local and CI toolchain is standardized on
+Node.js 24 and pnpm 10.34.0, with frozen dependency installs and the complete
+automated test command verified: 54 suites and 1,326 tests pass.
+
+Hosted LeadPerfection workflow validation and the one-agent, one-working-day
+pilot remain outstanding. The connector can:
 
 - connect to the LeadPerfection production environment
 - authenticate through the custom LeadPerfection sign-in flow
@@ -47,17 +51,17 @@ is reviewed successfully.
 
 ## Production hosting direction
 
-Production will run in a dedicated, client-owned Render workspace managed by
+Production now runs in a dedicated, client-owned Render workspace managed by
 the assistant owner. The pilot uses a single-member Hobby workspace, one paid
 always-on Node.js web service, and one paid Render Postgres database. The
-developer does not need a paid Render seat: this public repository can deploy
-automatically from `main` after GitHub checks pass.
+developer does not need a paid Render seat: this public repository deploys from
+`main` through a narrowly scoped hook after GitHub checks pass.
 
 The root `render.yaml` defines both resources, their private database
 connection, generated application secrets, the `/isAlive` health check, and
-the production start command. No hosting account, web service, or cloud
-database has been created yet; those will be created with the assistant owner
-during the client meeting.
+the production start command. Both resources are live. Render's Node image
+already exposes pnpm, so the production build command intentionally runs
+`pnpm install --frozen-lockfile` without `corepack enable`.
 
 The permanent deployment region is Ohio, selected to balance the client's
 Colorado agents with LeadPerfection's central-US production endpoints. A

@@ -1,5 +1,27 @@
 # Client-owned Render deployment
 
+## Deployment status
+
+The initial infrastructure deployment was completed on September 20, 2026:
+
+- the paid Render PostgreSQL database is available in Ohio;
+- the paid Node.js web service built successfully and is live;
+- `/isAlive` returned HTTP 200 with `OK`;
+- GitHub Actions passed all 54 suites and 1,326 tests; and
+- the `RENDER_DEPLOY_HOOK_URL` secret successfully requested a Render
+  deployment of the tested `main` commit.
+
+During initial setup, Render's preinstalled pnpm binary caused `corepack
+enable` to fail while attempting to replace read-only `/usr/bin/pnpm`. Commit
+`e52103d6` corrected the Blueprint build command to `pnpm install
+--frozen-lockfile`. Do not restore `corepack enable` to the Render build
+command.
+
+The remaining work for the next session is the hosted LeadPerfection validation
+sequence and the one-agent pilot documented below. Account security,
+ownership, recovery, and backup items that have not been explicitly confirmed
+should also be reviewed before closing the deployment milestone.
+
 This runbook is for setting up the LeadPerfection connector in a Render
 workspace owned and operated by Discountbath. The assistant owner can be the
 workspace's only member. The developer does not need Render access for normal
@@ -117,18 +139,18 @@ Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
 - [ ] Client business email owns the Render account and workspace.
 - [ ] Two-factor authentication, recovery codes, and billing are client-held.
 - [ ] The workspace is Hobby with only the assistant owner as member.
-- [ ] Web service and Postgres are paid, available, and in the same confirmed
+- [x] Web service and Postgres are paid, available, and in the same confirmed
       region.
-- [ ] The web service is connected to this public repository and `main` branch.
+- [x] The web service is connected to this public repository and `main` branch.
 - [ ] The Blueprint has generated the two application secrets and stored the
       four LeadPerfection settings.
-- [ ] `/isAlive` returns HTTP 200 and `OK` from the Render URL.
+- [x] `/isAlive` returns HTTP 200 and `OK` from the Render URL.
 - [ ] The outbound IP ranges are recorded; no LeadPerfection source-IP
       restriction is expected.
-- [ ] `RENDER_DEPLOY_HOOK_URL` is stored only as an encrypted GitHub secret.
-- [ ] GitHub Actions is enabled for this fork and the **Tests** workflow passes
+- [x] `RENDER_DEPLOY_HOOK_URL` is stored only as an encrypted GitHub secret.
+- [x] GitHub Actions is enabled for this fork and the **Tests** workflow passes
       on `main`.
-- [ ] Render automatic deploy is off; the GitHub test workflow triggers the
+- [x] Render automatic deploy is off; the GitHub test workflow triggers the
       hook only after tests pass on a `main` push or an owner-triggered manual
       run of the **Tests** workflow.
 - [ ] The assistant owner knows where to view logs, redeploy, roll back, and
@@ -164,7 +186,7 @@ If this repository is made private or moved later, reconnect the service using
 a Git deployment credential that can read the new repository before the
 change, or deployments will stop.
 
-## Post-deployment work (not part of account setup)
+## Next-session hosted validation
 
 After the meeting, the technical validation sequence is:
 
