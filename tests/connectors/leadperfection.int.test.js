@@ -2,6 +2,7 @@
 const nock = require('nock');
 const leadperfection = require('../../src/connectors/leadperfection');
 const { encode, decoded } = require('@app-connect/core/lib/encode');
+const logger = require('@app-connect/core/lib/logger');
 const { createMockUser, createMockCallLog } = require('../fixtures/connectorMocks');
 
 jest.mock('@app-connect/core/models/userModel', () => ({
@@ -110,6 +111,75 @@ describe('LeadPerfection Connector', () => {
         expect(result.platformUserInfo.platformAdditionalInfo.permissions).toEqual(['GetCustomers3', 'AddCallHistory']);
         expect(decoded(result.platformUserInfo.platformAdditionalInfo.encodedApiUsername)).toBe('demo3api');
         expect(decoded(result.platformUserInfo.platformAdditionalInfo.encodedApiPassword)).toBe('LP3api123!');
+    });
+
+    test('getUserInfo captures the employee from the production Emp_ID field', async () => {
+        const code = encode(JSON.stringify({
+            username: 'aflores',
+            password: 'secret',
+            clientId: 'v6nka'
+        }));
+        const result = await leadperfection.getUserInfo({
+            hostname: 'v6nka.leadperfection.com',
+            callbackUri: `https://example.com/callback?code=${code}`,
+            data: {
+                user_data: {
+                    Settings: ['GetCustomers3', 'AddCallHistory'],
+                    Emp_ID: 64
+                }
+            }
+        });
+
+        expect(result.successful).toBe(true);
+        expect(result.platformUserInfo.id).toBe('aflores-leadperfection');
+        expect(result.platformUserInfo.platformAdditionalInfo.employeeId).toBe(64);
+    });
+
+    test('exchangeOAuthCallback ignores a caller-supplied token URL', async () => {
+        const code = encode(JSON.stringify({
+            username: 'demo3api',
+            password: 'LP3api123!',
+            clientId: 'demo3'
+        }));
+        const attackerScope = nock('https://attacker.example')
+            .post('/token')
+            .reply(200, { access_token: 'attacker-token' });
+        nock(baseUrl)
+            .post('/token', body => body.appkey === 'test-app-key')
+            .reply(200, {
+                access_token: 'token-123',
+                refresh_token: 'refresh-123',
+                expires_in: 86400
+            });
+
+        const result = await leadperfection.exchangeOAuthCallback({
+            callbackUri: `https://example.com/callback?code=${code}`,
+            tokenUrl: 'https://attacker.example/token',
+            hostname: 'demo3.leadperfection.com'
+        });
+
+        expect(result.accessToken).toBe('token-123');
+        expect(attackerScope.isDone()).toBe(false);
+    });
+
+    test('token refresh ignores a token URL stored on the user', async () => {
+        mockUser.tokenExpiry = new Date(Date.now() - 60 * 1000);
+        mockUser.platformAdditionalInfo.tokenUrl = 'https://attacker.example/token';
+        const attackerScope = nock('https://attacker.example')
+            .post('/token')
+            .reply(200, { access_token: 'attacker-token' });
+        nock(baseUrl)
+            .post('/token')
+            .reply(200, {
+                access_token: 'new-access-token',
+                refresh_token: 'new-refresh-token',
+                expires_in: 86400
+            });
+
+        const result = await leadperfection.checkAndRefreshAccessToken({}, mockUser);
+
+        expect(result.accessToken).toBe('new-access-token');
+        expect(attackerScope.isDone()).toBe(false);
     });
 
     test('exchangeOAuthCallback exchanges the opaque code with LP password grant', async () => {
@@ -299,11 +369,13 @@ describe('LeadPerfection Connector', () => {
         const additionalInfo = result.matchedContactInfo[0].additionalInfo;
         expect(additionalInfo.resultCode).toHaveLength(19);
         expect(additionalInfo.resultCode[0]).toEqual({ const: 'NA', title: 'No Answer' });
-        expect(additionalInfo.callType).toHaveLength(11);
-        expect(additionalInfo.callType[0]).toEqual({ const: 'O', title: 'Other' });
+        expect(additionalInfo.callType).toHaveLength(12);
+        expect(additionalInfo.callType[0].const).toBe('auto');
+        expect(additionalInfo.callType[1]).toEqual({ const: 'O', title: 'Other' });
     });
 
     test('findContact attaches dropdown options to the create-new-contact entry', async () => {
+        process.env.LP_ENABLE_LEAD_ADD = 'true';
         nock(baseUrl)
             .post('/api/Customers/GetCustomers3')
             .times(10)
@@ -320,7 +392,26 @@ describe('LeadPerfection Connector', () => {
         const newContactEntry = result.matchedContactInfo[0];
         expect(newContactEntry.isNewContact).toBe(true);
         expect(newContactEntry.additionalInfo.resultCode).toHaveLength(19);
-        expect(newContactEntry.additionalInfo.callType).toHaveLength(11);
+        expect(newContactEntry.additionalInfo.callType).toHaveLength(12);
+
+        delete process.env.LP_ENABLE_LEAD_ADD;
+    });
+
+    test('findContact offers no create-new-contact entry while LeadAdd is not enabled', async () => {
+        nock(baseUrl)
+            .post('/api/Customers/GetCustomers3')
+            .times(10)
+            .reply(200, []);
+
+        const result = await leadperfection.findContact({
+            user: mockUser,
+            authHeader: 'Bearer current-access-token',
+            phoneNumber: '+14155559903',
+            isExtension: 'false'
+        });
+
+        expect(result.successful).toBe(true);
+        expect(result.matchedContactInfo).toEqual([]);
     });
 
     test('findContact accepts a single-object GetCustomers3 response', async () => {
@@ -445,6 +536,7 @@ describe('LeadPerfection Connector', () => {
     });
 
     test('createContact posts LeadAdd payload', async () => {
+        process.env.LP_ENABLE_LEAD_ADD = 'true';
         nock(baseUrl)
             .post('/api/Leads/LeadAdd', body => body.firstname === 'Jane' && body.lastname === 'Smith' && body.phone === '+14155551234')
             .reply(200, { prospectid: 456 });
@@ -458,6 +550,22 @@ describe('LeadPerfection Connector', () => {
 
         expect(result.contactInfo.id).toBe('456');
         expect(result.contactInfo.type).toBe('Lead');
+
+        delete process.env.LP_ENABLE_LEAD_ADD;
+    });
+
+    test('createContact explains that contact creation is disabled without calling LeadAdd', async () => {
+        const result = await leadperfection.createContact({
+            user: mockUser,
+            authHeader: 'Bearer current-access-token',
+            phoneNumber: '+14155551234',
+            newContactName: 'Jane Smith'
+        });
+
+        expect(result.contactInfo).toBeNull();
+        expect(result.returnMessage.messageType).toBe('warning');
+        expect(result.returnMessage.message).toMatch(/Add the lead in LeadPerfection first/);
+        expect(nock.pendingMocks()).toEqual([]);
     });
 
     test('createCallLog posts AddCallHistory payload', async () => {
@@ -755,5 +863,149 @@ describe('LeadPerfection Connector', () => {
 
         expect(result.logId).toBe(1000);
         expect(result.returnMessage.message).toBe('Call logged');
+    });
+
+    const contactInfo = {
+        id: '123',
+        name: 'John Doe',
+        phone: '+14155551234',
+        type: 'Contact',
+        additionalInfo: {
+            custId: '123'
+        }
+    };
+
+    test('createCallLog formats CallDate in the LeadPerfection business timezone', async () => {
+        // 10:00 UTC on January 15 is 03:00 Mountain Standard Time.
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => body.CallDate === '2024-01-15 03:00:00')
+            .reply(200, { CallHistoryID: 1010 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog,
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1010);
+    });
+
+    test('createCallLog honors an LP_TIMEZONE override', async () => {
+        process.env.LP_TIMEZONE = 'America/New_York';
+        const callLog = createMockCallLog();
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => body.CallDate === '2024-01-15 05:00:00')
+            .reply(200, { CallHistoryID: 1011 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog,
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1011);
+
+        delete process.env.LP_TIMEZONE;
+    });
+
+    test('createCallLog resolves the Auto call type from the call direction', async () => {
+        process.env.LP_INBOUND_CALL_TYPE = 'I';
+        process.env.LP_OUTBOUND_CALL_TYPE = 'O';
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => body.CallType === 'I')
+            .reply(200, { CallHistoryID: 1012 })
+            .post('/api/Customers/AddCallHistory', body => body.CallType === 'O')
+            .reply(200, { CallHistoryID: 1013 });
+
+        const inbound = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog: createMockCallLog({ direction: 'Inbound', sessionId: 'session-auto-in' }),
+            additionalSubmission: { resultCode: 'NA', callType: 'auto' }
+        });
+        const outbound = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog: createMockCallLog({ direction: 'Outbound', sessionId: 'session-auto-out' }),
+            additionalSubmission: { resultCode: 'NA', callType: 'auto' }
+        });
+
+        expect(inbound.logId).toBe(1012);
+        expect(outbound.logId).toBe(1013);
+
+        delete process.env.LP_INBOUND_CALL_TYPE;
+        delete process.env.LP_OUTBOUND_CALL_TYPE;
+    });
+
+    test('createCallLog retries under LP_EMPLOYEE_ID when LP rejects the agent employee', async () => {
+        process.env.LP_EMPLOYEE_ID = '51';
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory', body => body.EmpID === 77)
+            .reply(200, [{ Result: 0, Message: 'Error: Employee id does not exist.' }])
+            .post('/api/Customers/AddCallHistory', body => body.EmpID === '51')
+            .reply(200, { CallHistoryID: 1014 });
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog: createMockCallLog(),
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBe(1014);
+        expect(result.returnMessage.messageType).toBe('success');
+        expect(nock.pendingMocks()).toEqual([]);
+
+        delete process.env.LP_EMPLOYEE_ID;
+    });
+
+    test('createCallLog does not retry other LeadPerfection validation errors', async () => {
+        process.env.LP_EMPLOYEE_ID = '51';
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory')
+            .once()
+            .reply(200, [{ Result: 0, Message: 'Error: CallType does not exist.' }]);
+
+        const result = await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog: createMockCallLog(),
+            additionalSubmission: null
+        });
+
+        expect(result.logId).toBeNull();
+        expect(result.returnMessage.message).toBe('Error: CallType does not exist.');
+
+        delete process.env.LP_EMPLOYEE_ID;
+    });
+
+    test('createCallLog keeps customer phone numbers and LP responses out of production logs', async () => {
+        const originalIsProd = process.env.IS_PROD;
+        process.env.IS_PROD = 'true';
+        const infoSpy = jest.spyOn(logger, 'info');
+        nock(baseUrl)
+            .post('/api/Customers/AddCallHistory')
+            .reply(200, { CallHistoryID: 1015 })
+            .post('/api/SalesApi/AddNotes')
+            .reply(200, 'UPDATED SUCCESSFULLY!');
+
+        await leadperfection.createCallLog({
+            user: mockUser,
+            contactInfo,
+            callLog: createMockCallLog(),
+            note: 'Customer asked for a callback',
+            additionalSubmission: null
+        });
+
+        const logged = JSON.stringify(infoSpy.mock.calls);
+        expect(logged).not.toContain('14155555678');
+        expect(logged).not.toContain('UPDATED SUCCESSFULLY');
+        expect(logged).not.toContain('Customer asked for a callback');
+
+        infoSpy.mockRestore();
+        process.env.IS_PROD = originalIsProd;
     });
 });

@@ -58,6 +58,9 @@ services:
         value: I
       - key: LP_OUTBOUND_CALL_TYPE
         value: O
+      # LeadPerfection stores CallDate as local wall-clock time; the host is UTC.
+      - key: LP_TIMEZONE
+        value: America/Denver
 
 databases:
   - name: discountbath-lp-db

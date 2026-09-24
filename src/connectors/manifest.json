@@ -1494,6 +1494,10 @@
               "includeNoneOption": true,
               "options": [
                 {
+                  "const": "auto",
+                  "title": "Auto (Inbound if incoming, else Other)"
+                },
+                {
                   "const": "O",
                   "title": "Other"
                 },

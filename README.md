@@ -80,6 +80,11 @@ pre-meeting preparation, meeting sequence, ownership boundary, acceptance
 checklist, and post-deployment tests. The local working-copy hosting note
 contains the historical provider comparison and deeper project context.
 
+The [hosted validation and one-agent pilot
+runbook](docs/developers/agent-pilot.md) defines the read-only hosted smoke gate,
+scripted agent scenarios, evidence requirements, stop rules, and rollout exit
+criteria.
+
 ## Upstream framework
 
 This project is based on RingCentral App Connect:

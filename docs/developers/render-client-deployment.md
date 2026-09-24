@@ -98,6 +98,11 @@ plan.
 Do not add AWS or DynamoDB variables. Do not add `USE_CACHE` or
 `USE_TOKEN_REFRESH_LOCK_PLATFORMS` for this deployment.
 
+The Blueprint also sets the non-secret call-log defaults and
+`LP_TIMEZONE=America/Denver`. LeadPerfection stores call dates as local
+wall-clock time while Render runs in UTC, so change `LP_TIMEZONE` only if the
+client's LeadPerfection account uses a different business timezone.
+
 ## Meeting procedure (approximately 30–45 minutes)
 
 1. The assistant owner creates or signs in to the Render account using the
@@ -188,13 +193,55 @@ change, or deployments will stop.
 
 ## Next-session hosted validation
 
-After the meeting, the technical validation sequence is:
+Use the tracked [hosted validation and one-agent pilot runbook](agent-pilot.md)
+for evidence, pass/fail criteria, stop rules, and the day-of-pilot workflow. The
+technical validation sequence is:
 
-1. Perform a controlled sign-in and harmless production contact lookup.
-2. Exercise an expired-token refresh against the hosted service.
-3. Complete one real agent's hosted call-log and notes workflow.
-4. Create a Postgres logical export and perform a documented restore test.
-5. Run the approved one-agent, one-working-day pilot before wider rollout.
+1. Point the App Connect Developer Console connector at Render (see below).
+   The extension downloads its manifest from the Console, not from this
+   server, so until this is done agents keep calling the old development URL.
+2. Perform a controlled sign-in and harmless production contact lookup.
+3. Exercise an expired-token refresh against the hosted service.
+4. Complete one real agent's hosted call-log and notes workflow.
+5. Create a Postgres logical export and perform a documented restore test.
+6. Run the approved one-agent, one-working-day pilot before wider rollout.
+
+Before entering credentials or creating records, run the read-only hosted gate
+against the exact service URL:
+
+```bash
+pnpm test:hosted -- https://YOUR-SERVICE.onrender.com
+```
+
+### Point the Developer Console connector at Render
+
+In the App Connect Developer Console (`appconnect.labs.ringcentral.com/console`),
+open the LeadPerfection connector and change:
+
+| Manifest field | Value |
+|---|---|
+| `serverUrl` | `https://YOUR-SERVICE.onrender.com` |
+| `auth.oauth.authUrl` | `https://YOUR-SERVICE.onrender.com/leadperfection/auth` |
+| `auth.oauth.redirectUri` | unchanged: `https://ringcentral.github.io/ringcentral-embeddable/redirect.html` |
+| `canOpenLogPage` (top level and `page.callLog`) | `false` — LeadPerfection has no verified call-log page URL |
+| `version` | increment it |
+
+Save, reload the Console page to confirm the values persisted, then in the
+extension deselect and reselect the connector so it downloads the new manifest.
+Every agent reconnects once on the hosted service; connections made against
+the development server are not carried over.
+
+The sign-in page only redirects to the registered App Connect redirect page. If
+the Console uses a different `redirectUri`, add it to `LP_ALLOWED_REDIRECT_URIS`
+(comma-separated, origin and path only) or sign-in will be refused.
+
+Confirm the Console now serves the hosted URLs by passing its public manifest
+URL as a second argument (the connector ID is in the Console page URL; the
+account ID is the RingCentral account number):
+
+```bash
+pnpm test:hosted -- https://YOUR-SERVICE.onrender.com "https://appconnect.labs.ringcentral.com/public-api/connectors/CONNECTOR_ID/manifest?access=internal&type=connector&accountId=RC_ACCOUNT_ID"
+```
 
 The assistant owner should remain present or available during the first hosted
 validation so production logs can be viewed if needed.

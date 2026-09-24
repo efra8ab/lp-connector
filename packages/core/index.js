@@ -242,9 +242,11 @@ function createCoreRouter() {
             if (crmManifest) {
                 const appServer = process.env.OVERRIDE_APP_SERVER || process.env.APP_SERVER;
                 crmManifest = replaceAppServerPlaceholders(crmManifest, appServer);
-                // Override app server url for local development
-                if (process.env.OVERRIDE_APP_SERVER) {
-                    crmManifest.serverUrl = process.env.OVERRIDE_APP_SERVER;
+                // A deployed manifest must send client API traffic back to the
+                // same application that served it. OVERRIDE_APP_SERVER remains
+                // useful locally, but APP_SERVER is the canonical production URL.
+                if (appServer) {
+                    crmManifest.serverUrl = appServer;
                 }
                 // Override server side logging server url for local development
                 if (process.env.OVERRIDE_SERVER_SIDE_LOGGING_SERVER && crmManifest.platforms) {

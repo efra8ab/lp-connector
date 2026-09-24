@@ -24,6 +24,7 @@
     "start-debug": "node --inspect ./src/server.js",
     "test": "node scripts/run-tests.js",
     "test:root": "jest --forceExit --runInBand",
+    "test:hosted": "node ./scripts/hosted-smoke.js",
     "test-coverage": "jest --coverage --runInBand",
     "build-local": "node ./scripts/build",
     "build": "node ./scripts/serverless-build",

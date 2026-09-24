@@ -16,6 +16,7 @@ jest.mock('../lib/analytics', () => ({
 const jwt = require('../lib/jwt');
 const authCore = require('../handlers/auth');
 const { createCoreRouter, createCoreMiddleware } = require('../index');
+const connectorRegistry = require('../connector/registry');
 
 function buildApp() {
   const app = express();
@@ -103,3 +104,58 @@ describe('Core Router JWT normalization', () => {
   });
 });
 
+describe('Core Router hosted manifest', () => {
+  const originalAppServer = process.env.APP_SERVER;
+  const originalOverrideAppServer = process.env.OVERRIDE_APP_SERVER;
+
+  beforeEach(() => {
+    connectorRegistry.setDefaultManifest({
+      serverUrl: 'https://upstream.example.com',
+      author: { name: 'Test' },
+      platforms: {
+        leadperfection: {
+          auth: {
+            oauth: {
+              authUrl: '__APP_SERVER__/leadperfection/auth',
+            },
+          },
+        },
+      },
+    });
+    process.env.APP_SERVER = 'https://hosted.example.com';
+    delete process.env.OVERRIDE_APP_SERVER;
+  });
+
+  afterAll(() => {
+    if (originalAppServer === undefined) {
+      delete process.env.APP_SERVER;
+    } else {
+      process.env.APP_SERVER = originalAppServer;
+    }
+    if (originalOverrideAppServer === undefined) {
+      delete process.env.OVERRIDE_APP_SERVER;
+    } else {
+      process.env.OVERRIDE_APP_SERVER = originalOverrideAppServer;
+    }
+  });
+
+  test('uses APP_SERVER for the manifest API and authorization URLs', async () => {
+    const response = await request(buildApp()).get('/crmManifest?platformName=leadperfection');
+
+    expect(response.status).toBe(200);
+    expect(response.body.serverUrl).toBe('https://hosted.example.com');
+    expect(response.body.platforms.leadperfection.auth.oauth.authUrl)
+      .toBe('https://hosted.example.com/leadperfection/auth');
+  });
+
+  test('prefers OVERRIDE_APP_SERVER when it is explicitly configured', async () => {
+    process.env.OVERRIDE_APP_SERVER = 'https://override.example.com';
+
+    const response = await request(buildApp()).get('/crmManifest?platformName=leadperfection');
+
+    expect(response.status).toBe(200);
+    expect(response.body.serverUrl).toBe('https://override.example.com');
+    expect(response.body.platforms.leadperfection.auth.oauth.authUrl)
+      .toBe('https://override.example.com/leadperfection/auth');
+  });
+});

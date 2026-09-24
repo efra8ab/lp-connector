@@ -52,8 +52,50 @@ async function initDB() {
 
 initDB();
 
+const DEFAULT_LP_REDIRECT_URI = 'https://ringcentral.github.io/ringcentral-embeddable/redirect.html';
+
+// Every value on the sign-in page comes from the request, and the page collects
+// LeadPerfection passwords, so nothing may be interpolated unescaped.
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// The sign-in redirect carries the encrypted LeadPerfection credentials, so it
+// may only return to App Connect's registered redirect page. Entries in
+// LP_ALLOWED_REDIRECT_URIS are compared by origin and path.
+function isAllowedLeadPerfectionRedirectUri(redirectUri) {
+    const allowed = (process.env.LP_ALLOWED_REDIRECT_URIS || DEFAULT_LP_REDIRECT_URI)
+        .split(',')
+        .map(value => value.trim())
+        .filter(Boolean);
+    try {
+        const url = new URL(redirectUri);
+        return allowed.includes(`${url.origin}${url.pathname}`);
+    }
+    catch {
+        return false;
+    }
+}
+
+function rejectLeadPerfectionRedirect(res, redirectUri) {
+    let redirectHost = '';
+    try {
+        redirectHost = new URL(redirectUri).host;
+    }
+    catch {
+        // Missing or malformed; nothing useful to log.
+    }
+    logger.warn('LeadPerfection sign-in rejected an unregistered redirect_uri', { redirectHost });
+    res.status(400).type('text/plain').send('This sign-in link is not valid. Start again from RingCentral App Connect.');
+}
+
 function renderLeadPerfectionAuthPage({ username = '', error = '', redirectUri = '', state = '', hostname = '', clientId = '' }) {
-    const errorHtml = error ? `<p style="margin:0 0 16px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;padding:12px 14px;border-radius:10px;">${error}</p>` : '';
+    const errorHtml = error ? `<p style="margin:0 0 16px;color:#b42318;background:#fef3f2;border:1px solid #fecdca;padding:12px 14px;border-radius:10px;">${escapeHtml(error)}</p>` : '';
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -146,17 +188,17 @@ function renderLeadPerfectionAuthPage({ username = '', error = '', redirectUri =
     <p>Sign in with your LeadPerfection username and password to connect RingCentral App Connect.</p>
     ${errorHtml}
     <div class="meta">
-      <strong>Client ID:</strong> ${clientId || 'Not configured'}<br>
-      <strong>Hostname:</strong> ${hostname || 'Unknown'}
+      <strong>Client ID:</strong> ${escapeHtml(clientId) || 'Not configured'}<br>
+      <strong>Hostname:</strong> ${escapeHtml(hostname) || 'Unknown'}
     </div>
     <form method="post" action="/leadperfection/auth">
-      <input type="hidden" name="redirect_uri" value="${redirectUri}">
-      <input type="hidden" name="state" value="${state}">
-      <input type="hidden" name="hostname" value="${hostname}">
-      <input type="hidden" name="clientId" value="${clientId}">
+      <input type="hidden" name="redirect_uri" value="${escapeHtml(redirectUri)}">
+      <input type="hidden" name="state" value="${escapeHtml(state)}">
+      <input type="hidden" name="hostname" value="${escapeHtml(hostname)}">
+      <input type="hidden" name="clientId" value="${escapeHtml(clientId)}">
       <div class="field">
         <label for="username">Username</label>
-        <input id="username" name="username" autocomplete="username" required value="${username}">
+        <input id="username" name="username" autocomplete="username" required value="${escapeHtml(username)}">
       </div>
       <div class="field">
         <label for="password">Password</label>
@@ -451,6 +493,10 @@ app.get('/leadperfection/auth', function (req, res) {
         const stateParams = new URLSearchParams(state ? decodeURIComponent(state) : '');
         const hostname = req.query.hostname || stateParams.get('hostname') || '';
         const redirectUri = req.query.redirect_uri || '';
+        if (!isAllowedLeadPerfectionRedirectUri(redirectUri)) {
+            rejectLeadPerfectionRedirect(res, redirectUri);
+            return;
+        }
         const clientId = getLeadPerfectionClientId({ hostname });
         res.send(renderLeadPerfectionAuthPage({
             redirectUri,
@@ -479,7 +525,11 @@ app.post('/leadperfection/auth', function (req, res) {
         const password = req.body?.password;
         const hostname = req.body?.hostname || '';
         const clientId = req.body?.clientId || getLeadPerfectionClientId({ hostname });
-        if (!redirectUri || !state || !username || !password) {
+        if (!isAllowedLeadPerfectionRedirectUri(redirectUri)) {
+            rejectLeadPerfectionRedirect(res, redirectUri);
+            return;
+        }
+        if (!state || !username || !password) {
             res.status(400).send(renderLeadPerfectionAuthPage({
                 redirectUri,
                 state,

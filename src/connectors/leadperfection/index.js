@@ -1,7 +1,7 @@
 /* eslint-disable no-param-reassign */
 const axios = require('axios');
 const { randomUUID } = require('crypto');
-const moment = require('moment');
+const moment = require('moment-timezone');
 const { parsePhoneNumber } = require('awesome-phonenumber');
 const { UserModel } = require('@app-connect/core/models/userModel');
 const {
@@ -31,6 +31,9 @@ const callLogDropdownOptions = (() => {
 })();
 
 const DEFAULT_LP_BASE_URL = 'https://apitest.leadperfection.com';
+// LeadPerfection stores CallDate as wall-clock time with no offset, so it must
+// be formatted in the client's business timezone rather than the host's (UTC).
+const DEFAULT_LP_TIMEZONE = 'America/Denver';
 const LP_TOKEN_LOCK_TTL_SECONDS = 30;
 const TOKEN_EXPIRY_BUFFER_MINUTES = 2;
 const CONTACT_LOOKUP_CACHE_TTL_MS = 10000;
@@ -52,8 +55,11 @@ function getBaseUrl(user) {
     return String(baseUrl).replace(/\/$/, '');
 }
 
-function getTokenUrl({ tokenUrl, user } = {}) {
-    return tokenUrl || user?.platformAdditionalInfo?.tokenUrl || `${getBaseUrl(user)}/token`;
+// The token endpoint always comes from server configuration. The OAuth callback
+// accepts a tokenUrl query parameter, and honoring it would let any caller make
+// this server post the AppKey (and a user's credentials) to another host.
+function getTokenUrl(user) {
+    return `${getBaseUrl(user)}/token`;
 }
 
 function deriveClientIdFromHostname(hostname) {
@@ -114,11 +120,11 @@ function resolveTokenExpiry(authData) {
     return null;
 }
 
-async function getOauthInfo({ tokenUrl, hostname }) {
+async function getOauthInfo({ hostname }) {
     return {
         clientId: process.env.LP_OAUTH_CLIENT_ID || resolveClientId({ hostname }) || 'leadperfection',
         clientSecret: process.env.LP_OAUTH_CLIENT_SECRET || process.env.LP_APPKEY || 'leadperfection',
-        accessTokenUri: getTokenUrl({ tokenUrl }),
+        accessTokenUri: getTokenUrl(),
         redirectUri: process.env.LP_REDIRECT_URI || 'https://ringcentral.github.io/ringcentral-embeddable/redirect.html'
     };
 }
@@ -139,9 +145,9 @@ function getOverridingOAuthOption({ code }) {
     };
 }
 
-async function tokenRequest({ user, tokenUrl, params }) {
+async function tokenRequest({ user, params }) {
     return axios.post(
-        getTokenUrl({ tokenUrl, user }),
+        getTokenUrl(user),
         new URLSearchParams(params),
         {
             headers: {
@@ -179,10 +185,9 @@ async function leadperfectionPasswordAuthorize(user, payload = {}) {
     }
 }
 
-async function exchangeOAuthCallback({ callbackUri, tokenUrl, hostname }) {
+async function exchangeOAuthCallback({ callbackUri, hostname }) {
     const payload = getAuthPayloadFromCallbackUri(callbackUri) || {};
     const tokenResponse = await tokenRequest({
-        tokenUrl,
         params: {
             grant_type: 'password',
             username: payload.username || '',
@@ -314,12 +319,31 @@ async function checkAndRefreshAccessToken(_oauthApp, user, tokenLockTimeout = 20
     }, skipLock);
 }
 
-async function getUserInfo({ tokenUrl, hostname, callbackUri, data }) {
+// LeadPerfection's /token user_data names the employee `Emp_ID`; the other
+// spellings are accepted in case the API varies between environments.
+function getTokenEmployeeId(userData) {
+    return userData.Emp_ID
+        || userData.EmpID
+        || userData.empid
+        || userData.EmployeeID
+        || userData.employeeId
+        || null;
+}
+
+async function getUserInfo({ hostname, callbackUri, data }) {
     try {
         const authPayload = getAuthPayloadFromCallbackUri(callbackUri) || {};
         const tokenData = data || {};
         const userData = tokenData.user_data || tokenData.userData || {};
+        // Field names only, so the token's user_data shape can be confirmed in
+        // production logs without recording any values.
+        logger.info('LeadPerfection token user_data fields', {
+            fields: Object.keys(userData)
+        });
         const permissions = Array.isArray(userData.Settings) ? userData.Settings : [];
+        // Production tokens carry none of these, so connection ids are
+        // username-based. Emp_ID is deliberately not added here: doing so would
+        // change the id of every existing connection.
         const rawId = userData.EmpID
             || userData.empid
             || userData.EmployeeID
@@ -339,9 +363,9 @@ async function getUserInfo({ tokenUrl, hostname, callbackUri, data }) {
             || '+00:00';
         const platformAdditionalInfo = {
             apiUrl: getBaseUrl(),
-            tokenUrl: getTokenUrl({ tokenUrl }),
+            tokenUrl: getTokenUrl(),
             clientId: resolveClientId({ payload: authPayload, hostname }),
-            employeeId: userData.EmpID || userData.empid || userData.EmployeeID || userData.employeeId || null,
+            employeeId: getTokenEmployeeId(userData),
             permissions,
             encodedApiUsername: authPayload.username ? encode(authPayload.username) : '',
             encodedApiPassword: authPayload.password ? encode(authPayload.password) : ''
@@ -633,8 +657,10 @@ function getCallPhoneNumber(contactInfo, callLog) {
 
 // The extension appends a 'None' option to every selection dropdown and
 // submits it as the literal string 'none' — treat that as "not selected".
+// 'auto' is our own leading Call Type option: the extension pre-selects the
+// first option, so without it every untouched inbound call would log as Other.
 function getSubmittedSelection(value) {
-    return value && value !== 'none' ? value : undefined;
+    return value && value !== 'none' && value !== 'auto' ? value : undefined;
 }
 
 function getCallType(callLog, additionalSubmission) {
@@ -657,6 +683,12 @@ function getResultCode(callLog, additionalSubmission) {
 
 function getEmployeeId(user) {
     return user.platformAdditionalInfo?.employeeId || process.env.LP_EMPLOYEE_ID || undefined;
+}
+
+function formatCallDate(startTime) {
+    return moment(startTime)
+        .tz(process.env.LP_TIMEZONE || DEFAULT_LP_TIMEZONE)
+        .format('YYYY-MM-DD HH:mm:ss');
 }
 
 function getDigits(value) {
@@ -806,13 +838,17 @@ async function findContact({ user, authHeader, phoneNumber, isExtension }) {
                         variants
                     });
                 }
-                matchedContactInfo.push({
-                    id: 'createNewContact',
-                    name: 'Create new contact...',
-                    isNewContact: true,
-                    defaultContactType: 'Lead',
-                    additionalInfo: { ...callLogDropdownOptions }
-                });
+                // Offer contact creation only when this AppKey is entitled to
+                // LeadAdd; otherwise it always fails with a misleading auth error.
+                if (isLeadAddEnabled()) {
+                    matchedContactInfo.push({
+                        id: 'createNewContact',
+                        name: 'Create new contact...',
+                        isNewContact: true,
+                        defaultContactType: 'Lead',
+                        additionalInfo: { ...callLogDropdownOptions }
+                    });
+                }
             }
             const result = {
                 successful: true,
@@ -829,7 +865,7 @@ async function findContact({ user, authHeader, phoneNumber, isExtension }) {
                     platform: user?.platform,
                     userId: user?.id,
                     retryAfterMs: retryMs,
-                    phoneNumber: getNormalizedLookupPhone(phoneNumber)
+                    phoneNumber: process.env.IS_PROD === 'false' ? getNormalizedLookupPhone(phoneNumber) : undefined
                 });
                 return cachedResult || {
                     successful: true,
@@ -855,7 +891,22 @@ async function findContactWithName() {
     };
 }
 
+// RJR's AppKey entitlement for this client does not include LeadAdd.
+function isLeadAddEnabled() {
+    return process.env.LP_ENABLE_LEAD_ADD === 'true';
+}
+
 async function createContact({ user, authHeader, phoneNumber, newContactName }) {
+    if (!isLeadAddEnabled()) {
+        return {
+            contactInfo: null,
+            returnMessage: {
+                message: 'Creating LeadPerfection contacts from RingCentral is not enabled. Add the lead in LeadPerfection first, then log the call.',
+                messageType: 'warning',
+                ttl: 8000
+            }
+        };
+    }
     const [firstName, ...rest] = String(newContactName || '').trim().split(/\s+/);
     const response = await callLeadPerfectionApi({
         user,
@@ -912,14 +963,15 @@ async function addLeadPerfectionNote({ user, contactInfo, note }) {
         path: '/api/SalesApi/AddNotes',
         body
     });
+    const failureMessage = getLeadPerfectionError(response.data)
+        || (typeof response.data === 'string' && !/success/i.test(response.data) ? response.data : null);
     logger.info('LeadPerfection AddNotes response', {
         userId: user?.id,
         recId,
         status: response.status,
-        responseData: response.data
+        successful: !failureMessage,
+        responseData: process.env.IS_PROD === 'false' ? response.data : undefined
     });
-    const failureMessage = getLeadPerfectionError(response.data)
-        || (typeof response.data === 'string' && !/success/i.test(response.data) ? response.data : null);
     return {
         attempted: true,
         successful: !failureMessage,
@@ -927,11 +979,25 @@ async function addLeadPerfectionNote({ user, contactInfo, note }) {
     };
 }
 
+async function postCallHistory(user, payload) {
+    const response = await callLeadPerfectionApi({
+        user,
+        path: '/api/Customers/AddCallHistory',
+        body: payload
+    });
+    const responseData = response.data || {};
+    return {
+        status: response.status,
+        responseData,
+        lpError: getLeadPerfectionError(responseData)
+    };
+}
+
 async function createCallLog({ user, contactInfo, callLog, note, additionalSubmission }) {
     const contactId = getLeadPerfectionContactId(contactInfo);
     const payload = {
         EmpID: getEmployeeId(user),
-        CallDate: moment(callLog.startTime).format('YYYY-MM-DD HH:mm:ss'),
+        CallDate: formatCallDate(callLog.startTime),
         ResultCode: getResultCode(callLog, additionalSubmission),
         Phone: getDigits(getCallPhoneNumber(contactInfo, callLog)),
         CallType: getCallType(callLog, additionalSubmission),
@@ -943,25 +1009,44 @@ async function createCallLog({ user, contactInfo, callLog, note, additionalSubmi
     }
     payload[contactId.key] = contactId.value;
 
+    // The phone number and raw LP responses are customer data; production logs
+    // keep only the fields needed to diagnose a rejected call log.
+    const verboseLogging = process.env.IS_PROD === 'false';
     logger.info('LeadPerfection createCallLog payload', {
         userId: user?.id,
         contactId,
-        payload
+        payload: verboseLogging ? payload : {
+            EmpID: payload.EmpID,
+            CallDate: payload.CallDate,
+            ResultCode: payload.ResultCode,
+            CallType: payload.CallType,
+            Duration: payload.Duration
+        }
     });
 
-    const response = await callLeadPerfectionApi({
-        user,
-        path: '/api/Customers/AddCallHistory',
-        body: payload
-    });
-    const responseData = response.data || {};
+    let { status, responseData, lpError } = await postCallHistory(user, payload);
+    // LP validates every field before saving (a rejected payload writes nothing),
+    // so an agent Emp_ID that LP does not accept can safely be retried under the
+    // configured shared employee rather than losing the call log.
+    const fallbackEmployeeId = process.env.LP_EMPLOYEE_ID;
+    if (lpError
+        && /employee id does not exist/i.test(lpError)
+        && fallbackEmployeeId
+        && String(payload.EmpID) !== String(fallbackEmployeeId)) {
+        logger.warn('LeadPerfection rejected the agent employee ID; retrying with LP_EMPLOYEE_ID', {
+            userId: user?.id,
+            rejectedEmpID: payload.EmpID
+        });
+        payload.EmpID = fallbackEmployeeId;
+        ({ status, responseData, lpError } = await postCallHistory(user, payload));
+    }
     logger.info('LeadPerfection createCallLog response', {
         userId: user?.id,
         contactId,
-        status: response.status,
-        responseData
+        status,
+        lpError,
+        responseData: verboseLogging ? responseData : undefined
     });
-    const lpError = getLeadPerfectionError(responseData);
     if (lpError) {
         return {
             logId: null,
