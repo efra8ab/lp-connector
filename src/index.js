@@ -32,6 +32,7 @@ connectorRegistry.registerConnector('googleSheets', googleSheets);
 connectorRegistry.registerConnector('insightly', insightly);
 connectorRegistry.registerConnector('leadperfection', leadperfection);
 connectorRegistry.registerConnector('discountbath.lp_connector__dev_test', leadperfection);
+connectorRegistry.registerConnector('discountbath.discount_bath_leadperfection', leadperfection);
 connectorRegistry.registerConnector('netsuite', netsuite);
 connectorRegistry.registerConnector('pipedrive', pipedrive);
 connectorRegistry.registerConnector('redtail', redtail);
