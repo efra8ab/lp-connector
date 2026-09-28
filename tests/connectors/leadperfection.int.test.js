@@ -803,6 +803,214 @@ describe('LeadPerfection Connector', () => {
         expect(result.returnMessage.message).toMatch(/note could not be saved/i);
     });
 
+    describe('AI Assistant notes', () => {
+        const leadContact = {
+            id: '5550001',
+            name: 'Ai Test',
+            phone: '+14155551234',
+            type: 'Lead',
+            additionalInfo: {
+                custId: null,
+                leadId: '5550001',
+                prospectId: '3027945'
+            }
+        };
+        const aiNote = '**Summary**\nCustomer wants a quote for a walk-in tub.\n\n**Tasks**\n- Call back Friday';
+        const aiNoteText = 'Summary\nCustomer wants a quote for a walk-in tub.\n\nTasks\n- Call back Friday';
+
+        test('createCallLog saves the AI note below the agent note', async () => {
+            nock(baseUrl)
+                .post('/api/Customers/AddCallHistory')
+                .reply(200, { CallHistoryID: 2001 })
+                .post('/api/SalesApi/AddNotes', body => (
+                    body.recid === '3027945'
+                    && body.notes === `Left a voicemail\n\nAI Note:\n${aiNoteText}`
+                ))
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            const result = await leadperfection.createCallLog({
+                user: mockUser,
+                contactInfo: leadContact,
+                callLog: createMockCallLog({ sessionId: 'ai-create-both' }),
+                note: 'Left a voicemail',
+                aiNote,
+                additionalSubmission: null
+            });
+
+            expect(result.logId).toBe(2001);
+            expect(result.returnMessage.message).toMatch(/note saved/i);
+            expect(nock.isDone()).toBe(true);
+        });
+
+        test('createCallLog saves the AI note alone when the agent typed no note', async () => {
+            nock(baseUrl)
+                .post('/api/Customers/AddCallHistory')
+                .reply(200, { CallHistoryID: 2002 })
+                .post('/api/SalesApi/AddNotes', body => body.notes === `AI Note:\n${aiNoteText}`)
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            const result = await leadperfection.createCallLog({
+                user: mockUser,
+                contactInfo: leadContact,
+                callLog: createMockCallLog({ sessionId: 'ai-create-only' }),
+                note: '',
+                aiNote,
+                additionalSubmission: null
+            });
+
+            expect(result.returnMessage.message).toMatch(/note saved/i);
+            expect(nock.isDone()).toBe(true);
+        });
+
+        test('createCallLog leaves out the AI note when the agent turned off AI note logging', async () => {
+            nock(baseUrl)
+                .post('/api/Customers/AddCallHistory')
+                .reply(200, { CallHistoryID: 2003 })
+                .post('/api/SalesApi/AddNotes', body => body.notes === 'Left a voicemail')
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            await leadperfection.createCallLog({
+                user: { ...mockUser, userSettings: { addCallLogAiNote: { value: false } } },
+                contactInfo: leadContact,
+                callLog: createMockCallLog({ sessionId: 'ai-create-off' }),
+                note: 'Left a voicemail',
+                aiNote,
+                additionalSubmission: null
+            });
+
+            expect(nock.isDone()).toBe(true);
+        });
+
+        test('updateCallLog adds a late AI note to the record that got the call note', async () => {
+            nock(baseUrl)
+                .post('/api/Customers/AddCallHistory')
+                .reply(200, { CallHistoryID: 2004 })
+                .post('/api/SalesApi/AddNotes', body => body.notes === 'Left a voicemail')
+                .reply(200, '"UPDATED SUCCESSFULLY!"')
+                .post('/api/SalesApi/AddNotes', body => (
+                    body.recid === '3027945'
+                    && body.notes === `AI Note:\n${aiNoteText}`
+                ))
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            await leadperfection.createCallLog({
+                user: mockUser,
+                contactInfo: leadContact,
+                callLog: createMockCallLog({ sessionId: 'ai-late' }),
+                note: 'Left a voicemail',
+                additionalSubmission: null
+            });
+            const result = await leadperfection.updateCallLog({
+                user: mockUser,
+                existingCallLog: { sessionId: 'ai-late', contactId: leadContact.id, thirdPartyLogId: '2004' },
+                aiNote
+            });
+
+            expect(result.returnMessage.messageType).toBe('success');
+            expect(result.returnMessage.message).toMatch(/AI note saved/i);
+            expect(nock.isDone()).toBe(true);
+        });
+
+        test('updateCallLog does not repeat an AI note that was already saved', async () => {
+            nock(baseUrl)
+                .post('/api/Customers/AddCallHistory')
+                .reply(200, { CallHistoryID: 2005 })
+                .post('/api/SalesApi/AddNotes')
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            await leadperfection.createCallLog({
+                user: mockUser,
+                contactInfo: leadContact,
+                callLog: createMockCallLog({ sessionId: 'ai-repeat' }),
+                note: '',
+                aiNote,
+                additionalSubmission: null
+            });
+            const result = await leadperfection.updateCallLog({
+                user: mockUser,
+                existingCallLog: { sessionId: 'ai-repeat', contactId: leadContact.id, thirdPartyLogId: '2005' },
+                aiNote
+            });
+
+            expect(result.returnMessage.message).toMatch(/not implemented/i);
+            expect(nock.pendingMocks()).toEqual([]);
+        });
+
+        test('updateCallLog adds an edited AI note as a new note', async () => {
+            nock(baseUrl)
+                .post('/api/Customers/AddCallHistory')
+                .reply(200, { CallHistoryID: 2006 })
+                .post('/api/SalesApi/AddNotes')
+                .reply(200, '"UPDATED SUCCESSFULLY!"')
+                .post('/api/SalesApi/AddNotes', body => (
+                    body.recid === '3027945'
+                    && body.notes === 'AI Note (edited):\nCustomer wants a quote. Call back Monday.'
+                ))
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            await leadperfection.createCallLog({
+                user: mockUser,
+                contactInfo: leadContact,
+                callLog: createMockCallLog({ sessionId: 'ai-edited' }),
+                note: '',
+                aiNote,
+                additionalSubmission: null
+            });
+            const result = await leadperfection.updateCallLog({
+                user: mockUser,
+                existingCallLog: { sessionId: 'ai-edited', contactId: leadContact.id, thirdPartyLogId: '2006' },
+                aiNote: 'Customer wants a quote. Call back Monday.'
+            });
+
+            expect(result.returnMessage.messageType).toBe('success');
+            expect(nock.isDone()).toBe(true);
+        });
+
+        test('updateCallLog falls back to the logged contact when no note record was remembered', async () => {
+            nock(baseUrl)
+                .post('/api/SalesApi/AddNotes', body => (
+                    body.recid === '5550001'
+                    && body.notes === `AI Note:\n${aiNoteText}`
+                ))
+                .reply(200, '"UPDATED SUCCESSFULLY!"');
+
+            const result = await leadperfection.updateCallLog({
+                user: mockUser,
+                existingCallLog: { sessionId: 'ai-no-cache', contactId: '5550001', thirdPartyLogId: '2007' },
+                aiNote
+            });
+
+            expect(result.returnMessage.messageType).toBe('success');
+            expect(nock.isDone()).toBe(true);
+        });
+
+        test('updateCallLog warns when LeadPerfection rejects the AI note', async () => {
+            nock(baseUrl)
+                .post('/api/SalesApi/AddNotes')
+                .reply(500, 'server error');
+
+            const result = await leadperfection.updateCallLog({
+                user: mockUser,
+                existingCallLog: { sessionId: 'ai-rejected', contactId: '5550001', thirdPartyLogId: '2008' },
+                aiNote
+            });
+
+            expect(result.returnMessage.messageType).toBe('warning');
+            expect(result.returnMessage.message).toMatch(/AI note could not be saved/i);
+        });
+
+        test('updateCallLog without an AI note still explains that edits are not saved', async () => {
+            const result = await leadperfection.updateCallLog({
+                user: mockUser,
+                existingCallLog: { sessionId: 'ai-none', contactId: '5550001', thirdPartyLogId: '2009' },
+                note: 'Edited typed note'
+            });
+
+            expect(result.returnMessage.messageType).toBe('warning');
+            expect(result.returnMessage.message).toMatch(/not implemented/i);
+        });
+    });
+
     test('createCallLog returns warning when LeadPerfection reports body-level failure', async () => {
         const callLog = createMockCallLog();
         nock(baseUrl)

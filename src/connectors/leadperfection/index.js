@@ -1,9 +1,10 @@
 /* eslint-disable no-param-reassign */
 const axios = require('axios');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHash } = require('crypto');
 const moment = require('moment-timezone');
 const { parsePhoneNumber } = require('awesome-phonenumber');
 const { UserModel } = require('@app-connect/core/models/userModel');
+const { CacheModel } = require('@app-connect/core/models/cacheModel');
 const {
     acquireTokenRefreshLock,
     getTokenRefreshLock,
@@ -38,6 +39,10 @@ const LP_TOKEN_LOCK_TTL_SECONDS = 30;
 const TOKEN_EXPIRY_BUFFER_MINUTES = 2;
 const CONTACT_LOOKUP_CACHE_TTL_MS = 10000;
 const DEFAULT_CONTACT_LOOKUP_RETRY_MS = 30000;
+// Remembers, per call, which LP record got the note and which AI note text was
+// saved, so a later update neither repeats the AI note nor picks another record.
+const AI_NOTE_CACHE_KEY = 'lpAiNote';
+const AI_NOTE_CACHE_TTL_DAYS = 7;
 
 const contactLookupCache = new Map();
 const contactLookupRateLimits = new Map();
@@ -939,17 +944,77 @@ async function createContact({ user, authHeader, phoneNumber, newContactName }) 
     };
 }
 
+function getNoteRecordId(contactInfo) {
+    return contactInfo?.additionalInfo?.prospectId
+        || contactInfo?.additionalInfo?.leadId
+        || contactInfo?.additionalInfo?.custId
+        || contactInfo?.id;
+}
+
+// App Connect sends the RingCentral AI Assistant note as text with **bold**
+// markers; LP notes are plain text, so the markers are dropped. The agent's
+// "AI note" call-logging setting is honored the same way the core composer does.
+function getAiNoteText(user, aiNote) {
+    if (user?.userSettings?.addCallLogAiNote?.value === false) {
+        return '';
+    }
+    return String(aiNote || '').replace(/\*\*/g, '').trim();
+}
+
+function composeLeadPerfectionNote(note, aiNoteText, aiNoteLabel = 'AI Note') {
+    return [String(note || '').trim(), aiNoteText ? `${aiNoteLabel}:\n${aiNoteText}` : '']
+        .filter(Boolean)
+        .join('\n\n');
+}
+
+function hashAiNote(aiNoteText) {
+    return createHash('sha256').update(aiNoteText).digest('hex');
+}
+
+function getAiNoteCacheId(user, sessionId) {
+    return `${user?.id}-${AI_NOTE_CACHE_KEY}-${sessionId}`;
+}
+
+async function getSavedAiNote(user, sessionId) {
+    if (!sessionId) {
+        return null;
+    }
+    try {
+        const cached = await CacheModel.findByPk(getAiNoteCacheId(user, sessionId));
+        return cached?.data || null;
+    }
+    catch (error) {
+        logger.warn('Could not read the saved LeadPerfection AI note state', { userId: user?.id, message: error.message });
+        return null;
+    }
+}
+
+async function rememberAiNote({ user, sessionId, recId, aiNoteHash }) {
+    if (!sessionId) {
+        return;
+    }
+    try {
+        await CacheModel.upsert({
+            id: getAiNoteCacheId(user, sessionId),
+            status: 'saved',
+            userId: user?.id,
+            cacheKey: AI_NOTE_CACHE_KEY,
+            data: { recId: recId ? String(recId) : null, aiNoteHash },
+            expiry: moment().add(AI_NOTE_CACHE_TTL_DAYS, 'days').toDate()
+        });
+    }
+    catch (error) {
+        logger.warn('Could not remember the saved LeadPerfection AI note state', { userId: user?.id, message: error.message });
+    }
+}
+
 // AddNotes attaches to the record's Notes tab. rectype: cst=Prospect,
 // ils=Issued Lead, job=Job Detail; nct_id (note category) defaults to 1.
-async function addLeadPerfectionNote({ user, contactInfo, note }) {
+async function addLeadPerfectionNote({ user, recId, note }) {
     const noteText = String(note || '').trim();
     if (!noteText) {
         return { attempted: false };
     }
-    const recId = contactInfo?.additionalInfo?.prospectId
-        || contactInfo?.additionalInfo?.leadId
-        || contactInfo?.additionalInfo?.custId
-        || contactInfo?.id;
     const body = new URLSearchParams({
         rectype: 'cst',
         recid: String(recId),
@@ -993,7 +1058,7 @@ async function postCallHistory(user, payload) {
     };
 }
 
-async function createCallLog({ user, contactInfo, callLog, note, additionalSubmission }) {
+async function createCallLog({ user, contactInfo, callLog, note, aiNote, additionalSubmission }) {
     const contactId = getLeadPerfectionContactId(contactInfo);
     const payload = {
         EmpID: getEmployeeId(user),
@@ -1057,9 +1122,11 @@ async function createCallLog({ user, contactInfo, callLog, note, additionalSubmi
             }
         };
     }
+    const recId = getNoteRecordId(contactInfo);
+    const aiNoteText = getAiNoteText(user, aiNote);
     let noteOutcome = { attempted: false };
     try {
-        noteOutcome = await addLeadPerfectionNote({ user, contactInfo, note });
+        noteOutcome = await addLeadPerfectionNote({ user, recId, note: composeLeadPerfectionNote(note, aiNoteText) });
     }
     catch (error) {
         logger.error('LeadPerfection AddNotes failed', {
@@ -1070,6 +1137,12 @@ async function createCallLog({ user, contactInfo, callLog, note, additionalSubmi
         });
         noteOutcome = { attempted: true, successful: false, message: error.message };
     }
+    await rememberAiNote({
+        user,
+        sessionId: callLog.sessionId,
+        recId,
+        aiNoteHash: aiNoteText && noteOutcome.successful ? hashAiNote(aiNoteText) : null
+    });
     const logId = responseData.CallHistoryID || responseData.callHistoryId || responseData.id || callLog.sessionId;
     if (noteOutcome.attempted && !noteOutcome.successful) {
         return {
@@ -1091,13 +1164,55 @@ async function createCallLog({ user, contactInfo, callLog, note, additionalSubmi
     };
 }
 
-async function updateCallLog() {
+// LeadPerfection has no endpoint to edit a call history row or a note, so the
+// only update we can make is adding the AI Assistant note, which is often ready
+// only after the call was logged, or changes when the agent edits it.
+async function updateCallLog({ user, existingCallLog, aiNote }) {
+    const aiNoteText = getAiNoteText(user, aiNote);
+    const saved = aiNoteText ? await getSavedAiNote(user, existingCallLog?.sessionId) : null;
+    const aiNoteHash = aiNoteText ? hashAiNote(aiNoteText) : null;
+    if (!aiNoteText || saved?.aiNoteHash === aiNoteHash) {
+        return {
+            updatedNote: null,
+            returnMessage: {
+                message: 'LeadPerfection call log updates are not implemented yet.',
+                messageType: 'warning',
+                ttl: 3000
+            }
+        };
+    }
+    const recId = saved?.recId || existingCallLog?.contactId;
+    const aiNoteLabel = saved?.aiNoteHash ? 'AI Note (edited)' : 'AI Note';
+    let noteOutcome;
+    try {
+        noteOutcome = await addLeadPerfectionNote({ user, recId, note: composeLeadPerfectionNote('', aiNoteText, aiNoteLabel) });
+    }
+    catch (error) {
+        logger.error('LeadPerfection AddNotes failed for the AI note', {
+            userId: user?.id,
+            recId,
+            status: error.response?.status,
+            responseData: error.response?.data
+        });
+        noteOutcome = { attempted: true, successful: false, message: error.message };
+    }
+    if (!noteOutcome.successful) {
+        return {
+            updatedNote: null,
+            returnMessage: {
+                message: `The AI note could not be saved to LeadPerfection${noteOutcome.message ? `: ${noteOutcome.message}` : '.'}`,
+                messageType: 'warning',
+                ttl: 5000
+            }
+        };
+    }
+    await rememberAiNote({ user, sessionId: existingCallLog.sessionId, recId, aiNoteHash });
     return {
         updatedNote: null,
         returnMessage: {
-            message: 'LeadPerfection call log updates are not implemented yet.',
-            messageType: 'warning',
-            ttl: 3000
+            message: 'AI note saved to LeadPerfection',
+            messageType: 'success',
+            ttl: 2000
         }
     };
 }
